@@ -15,6 +15,7 @@ function h(tag, attrs, ...kids) {
 const rnd = n => Math.floor(Math.random() * n);
 const pick = a => a[rnd(a.length)];
 function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function weightedPick(items, wf) { const ws = items.map(wf); let r = Math.random() * ws.reduce((a, b) => a + b, 0); for (let i = 0; i < items.length; i++) { r -= ws[i]; if (r <= 0) return items[i]; } return items[items.length - 1]; }
 const L = s => `<span class="ltr">${s}</span>`;
 const fmtNote = n => n.replace(/##/g, "𝄪").replace(/bb/g, "𝄫").replace(/#/g, "♯").replace(/b/g, "♭");
 const NL = n => L(fmtNote(n));            // הצגת תו
@@ -479,16 +480,19 @@ function maskTerm(q, term) {
   words.forEach(w => { out = out.split(w).join("_____"); });
   return out;
 }
+/* מושגים שסומנו "לא ידעתי" (בכרטיסיות או בשאלות) מופיעים בשאלות בתדירות גבוהה יותר */
+const withTerm = (i, q) => { q.termIdx = i; return q; };
+function pickTerm() { const cand = TERMS.map((t, i) => ({ t, i })).filter(x => x.t.quotes.length); return weightedPick(cand, x => { const m = (typeof kMastery === "function") ? kMastery("C:" + x.i) : null; return m === null ? 1.5 : 0.5 + 5 * (1 - m); }); }
 topic("concepts", "מושגים והגדרות", "התאמת הגדרה לשם המושג – מתוך מילון הקורס", [
   function conceptDef() {
-    const t = pick(TERMS.filter(x => x.quotes.length));
+    const { t, i } = pickTerm();
     const q = pick(t.quotes); const masked = maskTerm(q.q, t.term);
-    return mc("concepts", "conceptDef", `איזה מושג מוגדר כך בשקפים?<br><i>"${masked}"</i>`, t.term, shuffle(TERMS).map(x => x.term), `${t.term}: "${q.q}"`, S(q.l, q.s));
+    return withTerm(i, mc("concepts", "conceptDef", `איזה מושג מוגדר כך בשקפים?<br><i>"${masked}"</i>`, t.term, shuffle(TERMS).map(x => x.term), `${t.term}: "${q.q}"`, S(q.l, q.s)));
   },
   function conceptTerm() {
-    const t = pick(TERMS.filter(x => x.quotes.length)); const q = pick(t.quotes);
+    const { t, i } = pickTerm(); const q = pick(t.quotes);
     const others = shuffle(TERMS.filter(x => x.term !== t.term)).slice(0, 3).map(x => pick(x.quotes).q);
-    return mc("concepts", "conceptTerm", `איזה משפט מהשקפים מתאר את <b>${t.term}</b>?`, q.q, others, `המשפט מתוך ${S(q.l, q.s)}.`, S(q.l, q.s));
+    return withTerm(i, mc("concepts", "conceptTerm", `איזה משפט מהשקפים מתאר את <b>${t.term}</b>?`, q.q, others, `המשפט מתוך ${S(q.l, q.s)}.`, S(q.l, q.s)));
   },
 ]);
 
@@ -508,37 +512,85 @@ let ST = load(); ST.stats = ST.stats || {}; ST.srs = ST.srs || {}; ST.exams = ST
 let LEAVE_GUARD = null, FLUSH_ACTIVE = null;
 document.addEventListener("visibilitychange", () => { if (document.hidden && FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } });
 window.addEventListener("pagehide", () => { if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } });
+/* ===================== מודל ידע אחיד =====================
+   כל תשובה – תרגול, מבחן, שאלון קצר, כרטיסיות מושגים, תרגילי אוזן – מעדכנת "שליטה" (0–1) לפי שיעור (L:), נושא (T:) ומושג (C:).
+   התרגול החכם, המושגים בשאלות, מפת הלמידה והשאלון הקצר כולם נשענים על אותו מידע. */
+ST.k = ST.k || {};
+function kUpdate(tag, ok) { const e = ST.k[tag] = ST.k[tag] || { n: 0, s: 0.5, w: 0, t: 0 }; e.n++; e.s = e.n === 1 ? (ok ? 0.85 : 0.15) : 0.65 * e.s + 0.35 * (ok ? 1 : 0); if (!ok) e.w++; e.t = Date.now(); }
+const kMastery = tag => { const e = ST.k[tag]; return e ? e.s : null; };
+function lessonsOfSrc(src) { const out = new Set(); String(src || "").replace(/שיעור\s*(\d+)/g, (m, l) => out.add(+l)); return [...out]; }
+function kRecord(tags, ok) { tags.forEach(t => kUpdate(t, ok)); save(ST); }
 function record(q, ok) {
   const k = q.topic + ":" + q.gen; const s = ST.stats[k] = ST.stats[k] || { n: 0, r: 0 };
-  s.n++; if (ok) s.r++; save(ST);
+  s.n++; if (ok) s.r++;
+  const tags = ["T:" + q.topic, ...lessonsOfSrc(q.src).map(l => "L:" + l)]; if (q.termIdx !== undefined) tags.push("C:" + q.termIdx);
+  tags.forEach(t => kUpdate(t, ok)); save(ST);
 }
 function topicStats(id) { let n = 0, r = 0; for (const k in ST.stats) if (k.startsWith(id + ":")) { n += ST.stats[k].n; r += ST.stats[k].r; } return { n, r }; }
+const LESSONS = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15];
+const lessonStatus = l => { const m = kMastery("L:" + l); return m === null ? "new" : m < 0.5 ? "weak" : m < 0.75 ? "mid" : "good"; };
+const STATUS_HE = { new: "טרם תורגל", weak: "צריך חיזוק", mid: "בדרך", good: "שולט" };
+const weakLessons = (n = 3) => LESSONS.map(l => ({ l, m: kMastery("L:" + l) })).filter(x => x.m !== null && x.m < 0.75).sort((a, b) => a.m - b.m).slice(0, n);
+const weakTermList = () => TERMS.map((t, i) => ({ t, i, m: kMastery("C:" + i) })).filter(x => x.m !== null && x.m < 0.6).sort((a, b) => a.m - b.m);
+const weightOf = m => m === null ? 0.7 : Math.max(0.08, 1.05 - m);
+/* שאלה חכמה: בוחרים שיעור לפי חולשה, ואז שואלים עליו (נושא לפי חולשה) */
+function smartQuestion() {
+  const L = weightedPick(LESSONS, l => weightOf(kMastery("L:" + l)));
+  for (let t = 0; t < 90; t++) { const id = weightedPick(TOPIC_ORDER, x => weightOf(kMastery("T:" + x))); const q = genQuestion(id); if (q && lessonsOfSrc(q.src).includes(L)) return q; }
+  return genQuestion(weightedPick(TOPIC_ORDER, x => weightOf(kMastery("T:" + x))));
+}
+function weakSummary() {
+  const wl = weakLessons(3), wt = weakTermList().length;
+  if (!wl.length && !wt) return Object.keys(ST.k).length ? "אין כרגע נקודות חלשות – כל הכבוד. אפשר לעשות שאלון קצר כדי לבדוק שוב." : "עוד אין נתונים. התחל בשאלון קצר – הוא ימפה במה לחזק.";
+  return "מתמקד ב: " + [...wl.map(x => `שיעור ${x.l}`), wt ? `${wt} מושגים` : null].filter(Boolean).join(" · ");
+}
 
 /* ===================== ממשק ===================== */
-const NAV = [["home", "בית"], ["chat", "צ'אט"], ["practice", "תרגול נושאים"], ["ear", "אימון אוזן"], ["flash", "כרטיסיות מושגים"], ["exam", "מבחן סימולציה"], ["ref", "טבלאות ומילון"], ["slides", "מצגות"]];
+const TABS = [["home", "🏠", "בית"], ["practice", "✏️", "תרגול"], ["ear", "👂", "אוזן"], ["ref", "📚", "חומר"], ["chat", "💬", "צ'אט"]];
+const TAB_OF = { home: "home", practice: "practice", flash: "practice", exam: "practice", quiz: "practice", ear: "ear", ref: "ref", slides: "ref", chat: "chat" };
 let view = "home";
 function renderNav() {
-  const nav = $("#nav"); nav.innerHTML = "";
-  NAV.forEach(([id, t]) => nav.append(h("button", { class: view === id ? "on" : "", onclick: () => go(id) }, t)));
+  const bar = $("#tabbar"); if (!bar) return; bar.innerHTML = "";
+  TABS.forEach(([id, ic, t]) => bar.append(h("button", { class: TAB_OF[view] === id ? "on" : "", "aria-label": t, "aria-current": TAB_OF[view] === id ? "page" : null, onclick: () => go(id) }, h("span", { class: "ti" }, ic), h("span", { class: "tl" }, t))));
 }
-function go(v, arg) { if (LEAVE_GUARD) { if (!LEAVE_GUARD(v, arg)) return; if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } LEAVE_GUARD = null; FLUSH_ACTIVE = null; } stopAudio(); if (EXAM_TIMER) { clearInterval(EXAM_TIMER); EXAM_TIMER = null; } view = v; renderNav(); const app = $("#app"); app.innerHTML = ""; ({ home, chat, practice, ear, flash, exam, ref, slides: slidesView })[v](app, arg); window.scrollTo(0, 0); }
+function go(v, arg) { if (LEAVE_GUARD) { if (!LEAVE_GUARD(v, arg)) return; if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } LEAVE_GUARD = null; FLUSH_ACTIVE = null; } stopAudio(); if (EXAM_TIMER) { clearInterval(EXAM_TIMER); EXAM_TIMER = null; } view = v; renderNav(); const app = $("#app"); app.innerHTML = ""; ({ home, chat, practice, ear, flash, exam, ref, quiz, slides: (a, g) => ref(a, { tab: "slides" }) })[v](app, arg); window.scrollTo(0, 0); }
 
 /* ---- בית ---- */
+const det = (title, ...kids) => { const d = h("details", { class: "fold" }, h("summary", {}, title), ...kids); return d; };
 function home(app) {
-  const smart = weakSpots();
-  const qs = h("input", { class: "search", type: "search", placeholder: "🔎 חפש מושג או מילה בכל המצגות (ספטימה, טריטון, פנטטוני…)", style: "direction:rtl;text-align:right;font-size:17px", autocomplete: "off", onkeydown: e => { if (e.key === "Enter" && e.target.value.trim()) go("ref", { tab: "search", q: e.target.value.trim() }); } });
-  app.append(
+  const qs = h("input", { class: "search", type: "search", placeholder: "🔎 חיפוש מושג או מילה בכל המצגות", style: "direction:rtl;text-align:right;font-size:17px", autocomplete: "off", onkeydown: e => { if (e.key === "Enter" && e.target.value.trim()) go("ref", { tab: "search", q: e.target.value.trim() }); } });
+  const sv = ST.active.exam || ST.active.ear;
+  const detail = h("div", { id: "lessonpanel" });
+  const map = h("div", { class: "lmap" }, ...LESSONS.map(l => h("button", { class: "lchip " + lessonStatus(l), "aria-label": `שיעור ${l}: ${STATUS_HE[lessonStatus(l)]}`, onclick: () => { detail.innerHTML = ""; detail.append(lessonPanel(l)); } }, String(l))));
+  const lastExam = ST.exams.length ? ST.exams[ST.exams.length - 1] : null;
+  app.append(...[
     h("div", { class: "card" }, qs),
-    h("div", { class: "card" }, h("h2", {}, "ברוך הבא"), h("p", {}, "מבחן הסיום מתקרב – הכל כאן מבוסס אך ורק על מצגות הקורס (שיעורים 1–15). בכל שאלה מופיע מראה מקום (שיעור, שקף) כדי שתוכל לחזור לחומר."),
-      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => go("practice", { smart: true }) }, "▶ תרגול חכם (מתמקד בנקודות חלשות)"), h("button", { class: "btn alt", onclick: () => go("exam") }, "מבחן סימולציה"), h("button", { class: "btn alt", onclick: () => go("ear") }, "אימון אוזן"))),
-    h("div", { class: "card" }, h("h3", {}, "התקדמות לפי נושא"), ...TOPIC_ORDER.map(id => { const s = topicStats(id); const pct = s.n ? Math.round(100 * s.r / s.n) : 0; return h("div", { style: "margin:8px 0" }, h("div", { class: "row", style: "justify-content:space-between" }, h("span", {}, TOPICS[id].he), h("span", { class: "muted" }, s.n ? `${pct}% (${s.r}/${s.n})` : "טרם תורגל")), h("div", { class: "bar" }, h("i", { style: `width:${pct}%` }))); })),
-    h("div", { class: "card" }, h("h3", {}, "נקודות לחיזוק"), smart.length ? h("ul", {}, ...smart.map(w => h("li", {}, `${TOPICS[w.topic].he} – ${GEN_HE[w.gen] || w.gen}:${Math.round(100 * w.r / w.n)}% (${w.r}/${w.n})`))) : h("p", { class: "muted" }, "עוד אין מספיק נתונים. התחל לתרגל!")),
-    location.protocol.startsWith("http") ? h("div", { class: "card" }, h("h3", {}, "📱 התקנה בטלפון"), h("p", {}, "אייפון (Safari): לחץ על כפתור השיתוף ⬆︎ ← \"הוסף למסך הבית\". אנדרואיד (Chrome): תפריט ⋮ ← \"התקן אפליקציה\" / \"הוסף למסך הבית\". אחרי ההתקנה האפליקציה נפתחת במסך מלא וגם עובדת בלי אינטרנט."), window.__installPrompt ? h("button", { class: "btn", onclick: () => window.__installPrompt.prompt() }, "התקן עכשיו") : null) : null,
-    h("div", { class: "card" }, h("h3", {}, "📚 חומר לימוד"), h("p", {}, "השקפים המקוריים של כל השיעורים נמצאים כאן באפליקציה – מכל שאלה אפשר לקפוץ ישר לשקף."), h("div", { class: "row" }, h("button", { class: "btn", onclick: () => go("slides") }, "📚 פתח את המצגות"), h("button", { class: "btn alt", onclick: () => go("ref", { tab: "tables" }) }, "📊 טבלאות"), h("button", { class: "btn alt", onclick: () => go("ref", { tab: "feel" }) }, "🎭 רגשות לכל סולם"), h("button", { class: "btn alt", onclick: slidesOpenSummaryPdf }, "📕 הסיכום המלא (PDF)")))
-  );
+    sv ? h("div", { class: "card", style: "border-color:var(--acc)" }, h("b", {}, "⏸ יש משהו שלא סיימת"), h("div", { class: "row", style: "margin-top:8px" }, ST.active.exam ? h("button", { class: "btn", onclick: () => go("exam", { resume: true }) }, "▶ המשך מבחן") : null, ST.active.ear ? h("button", { class: "btn", onclick: () => { unlockAudio(); go("ear", { stage: "run", resume: true }); } }, "▶ המשך תרגיל אוזן") : null)) : null,
+    h("div", { class: "card hero" }, h("button", { class: "btn big", onclick: () => go("practice", { smart: true }) }, "▶ תרגול חכם"), h("div", { class: "muted", style: "margin-top:6px" }, weakSummary()),
+      h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "btn alt", onclick: () => go("quiz") }, "⚡ שאלון קצר"), h("button", { class: "btn alt", onclick: () => go("flash") }, "🃏 כרטיסיות"), h("button", { class: "btn alt", onclick: () => go("exam") }, "📝 מבחן"))),
+    h("div", { class: "card" }, h("h3", { style: "margin:0 0 6px" }, "🗺 מפת הלמידה"), h("div", { class: "muted", style: "font-size:13px;margin-bottom:8px" }, "לחץ על שיעור: ירוק = שולט · כתום = בדרך · אדום = לחזק · אפור = טרם תורגל"), map, detail),
+    lastExam ? h("div", { class: "card muted" }, `מבחן אחרון: ${lastExam.pct}% (${lastExam.n} שאלות)`) : null,
+    det("📈 פירוט לפי נושא", ...TOPIC_ORDER.map(id => { const s = topicStats(id); const pct = s.n ? Math.round(100 * s.r / s.n) : 0; return h("div", { style: "margin:8px 0" }, h("div", { class: "row", style: "justify-content:space-between" }, h("span", {}, TOPICS[id].he), h("span", { class: "muted" }, s.n ? `${pct}% (${s.r}/${s.n})` : "טרם תורגל")), h("div", { class: "bar" }, h("i", { style: `width:${pct}%` }))); })),
+    det("⚙️ עוד: התקנה בטלפון וגיבוי", location.protocol.startsWith("http") ? h("p", {}, "אייפון (Safari): כפתור השיתוף ⬆︎ ← \"הוסף למסך הבית\". אנדרואיד (Chrome): תפריט ⋮ ← \"התקן אפליקציה\". אחרי ההתקנה האפליקציה נפתחת במסך מלא וגם עובדת בלי אינטרנט.") : null,
+      window.__installPrompt ? h("button", { class: "btn", onclick: () => window.__installPrompt.prompt() }, "התקן עכשיו") : null,
+      h("p", { class: "muted" }, "ההתקדמות נשמרת במכשיר הזה בלבד. כדי להעביר בין טלפון למחשב: ייצא קוד, הדבק אותו במכשיר השני וייבא."),
+      h("div", { class: "row" }, h("button", { class: "btn alt", onclick: exportProgress }, "📤 ייצוא התקדמות"), h("button", { class: "btn alt", onclick: importProgress }, "📥 ייבוא התקדמות")),
+      h("button", { class: "btn alt", style: "margin-top:8px", onclick: slidesOpenSummaryPdf }, "📕 הסיכום המלא (PDF)"))
+  ].filter(Boolean));
 }
-function weakSpots() {
-  return Object.entries(ST.stats).filter(([k, v]) => v.n >= 3 && v.r / v.n < 0.8).map(([k, v]) => ({ topic: k.split(":")[0], gen: k.split(":")[1], n: v.n, r: v.r })).filter(x => TOPICS[x.topic]).sort((a, b) => a.r / a.n - b.r / b.n).slice(0, 6);
+function lessonPanel(l) {
+  const m = kMastery("L:" + l); const st = lessonStatus(l);
+  return h("div", { class: "fb good", style: "margin-top:10px" }, h("b", {}, `שיעור ${l} – ${LESSON_TITLES[l] || ""}`), h("div", { class: "muted" }, `${STATUS_HE[st]}${m !== null ? ` · שליטה ${Math.round(m * 100)}%` : ""}`),
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "btn", onclick: () => openSlide(l, 1) }, "📄 פתח מצגת"), h("button", { class: "btn alt", onclick: () => go("quiz", { scope: "lesson", l }) }, "⚡ שאלון על השיעור"), h("button", { class: "btn alt", onclick: () => go("practice", { lesson: l }) }, "🔁 תרגל שיעור")));
+}
+function exportProgress() {
+  const code = btoa(unescape(encodeURIComponent(JSON.stringify({ v: 1, k: ST.k, stats: ST.stats, srs: ST.srs, exams: ST.exams }))));
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(() => alert("הקוד הועתק. הדבק אותו במכשיר השני דרך 'ייבוא התקדמות'."), () => prompt("העתק את הקוד:", code)); else prompt("העתק את הקוד:", code);
+}
+function importProgress() {
+  const code = prompt("הדבק כאן את קוד ההתקדמות:"); if (!code) return;
+  try { const d = JSON.parse(decodeURIComponent(escape(atob(code.trim())))); if (!d || d.v !== 1) throw 0; if (!confirm("הייבוא יחליף את ההתקדמות במכשיר הזה. להמשיך?")) return; ST.k = d.k || {}; ST.stats = d.stats || {}; ST.srs = d.srs || {}; ST.exams = d.exams || []; save(ST); go("home"); }
+  catch (e) { alert("הקוד לא תקין."); }
 }
 
 /* ---- בניית ממשק שאלה (משותף) ---- */
@@ -580,26 +632,68 @@ function questionView(q, opts) { // opts: {onAnswer(ok), showNow:true/false, pre
 function fmtAns(q) { return q.kind === "mc" ? q.options[q.correct] : q.answerList.map(fmtNote).join(" "); }
 function checkText(q, val) { const user = normList(val || ""); return user.length === q.answerList.length && user.every((x, i) => x === q.answerList[i]); }
 
-/* ---- תרגול נושאים ---- */
+/* ---- תרגול ---- */
 function practice(app, arg) {
-  if (!arg || (!arg.topic && !arg.smart)) {
-    app.append(h("div", { class: "card" }, h("h2", {}, "בחר נושא"), h("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "💾 כל תשובה נשמרת אוטומטית בסטטיסטיקה – אפשר לצאת בכל רגע."), h("div", { class: "grid" },
-      h("button", { class: "tile", onclick: () => go("practice", { smart: true }) }, "🎯 תרגול חכם", h("small", {}, "מתמקד בנקודות החלשות שלך")),
-      h("button", { class: "tile", onclick: () => go("practice", { topic: "all" }) }, "🔀 מיקס מכל הנושאים", h("small", {}, "כמו במבחן, עם משוב מיידי")),
-      ...TOPIC_ORDER.map(id => { const s = topicStats(id); return h("button", { class: "tile", onclick: () => go("practice", { topic: id }) }, TOPICS[id].he, h("small", {}, TOPICS[id].desc), h("small", {}, s.n ? `דיוק ${Math.round(100 * s.r / s.n)}% · ${s.n} שאלות` : "טרם תורגל")); }))));
+  if (!arg || (!arg.topic && !arg.smart && !arg.lesson)) {
+    const sv = ST.active.exam;
+    app.append(
+      h("div", { class: "card hero" }, h("h2", { style: "margin:0 0 6px" }, "✏️ תרגול"), h("button", { class: "btn big", onclick: () => go("practice", { smart: true }) }, "▶ תרגול חכם"), h("div", { class: "muted", style: "margin-top:6px" }, weakSummary()),
+        h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "btn alt", onclick: () => go("quiz") }, "⚡ שאלון קצר"), h("button", { class: "btn alt", onclick: () => go("flash") }, "🃏 כרטיסיות"), h("button", { class: "btn alt", onclick: () => go("exam") }, sv ? "📝 מבחן (יש שמור)" : "📝 מבחן סימולציה"))),
+      det("📚 לפי נושא", h("div", { class: "grid" }, h("button", { class: "tile", onclick: () => go("practice", { topic: "all" }) }, "🔀 מיקס מכל הנושאים", h("small", {}, "כמו במבחן, עם משוב מיידי")), ...TOPIC_ORDER.map(id => { const s = topicStats(id); return h("button", { class: "tile", onclick: () => go("practice", { topic: id }) }, TOPICS[id].he, h("small", {}, s.n ? `דיוק ${Math.round(100 * s.r / s.n)}% · ${s.n} שאלות` : "טרם תורגל")); }))),
+      det("🔢 לפי שיעור", h("div", { class: "lmap" }, ...LESSONS.map(l => h("button", { class: "lchip " + lessonStatus(l), "aria-label": `תרגל שיעור ${l}`, onclick: () => go("practice", { lesson: l }) }, String(l))))),
+      h("p", { class: "muted", style: "font-size:13px" }, "💾 כל תשובה נשמרת ומשפיעה על התרגול החכם."));
     return;
   }
   let count = 0, right = 0;
-  const host = h("div"); app.append(h("div", { class: "row" }, h("button", { class: "btn alt", onclick: () => go("practice") }, "← לנושאים"), h("span", { class: "pill", id: "score" }, "0/0")), host);
+  const title = arg.smart ? "תרגול חכם" : arg.lesson ? `שיעור ${arg.lesson}` : arg.topic === "all" ? "מיקס" : TOPICS[arg.topic].he;
+  const host = h("div"); app.append(h("div", { class: "row", style: "justify-content:space-between" }, h("button", { class: "btn alt", onclick: () => go("practice") }, "← חזרה"), h("b", {}, title), h("span", { class: "pill", id: "score" }, "0/0")), host);
+  function nextQ() {
+    if (arg.smart) return smartQuestion();
+    if (arg.lesson) { for (let t = 0; t < 120; t++) { const q = genQuestion(pick(TOPIC_ORDER)); if (q && lessonsOfSrc(q.src).includes(arg.lesson)) return q; } return smartQuestion(); }
+    return genQuestion(arg.topic === "all" ? pick(TOPIC_ORDER) : arg.topic);
+  }
   function next() {
-    let t = arg.topic;
-    if (arg.smart) { const w = weakSpots(); t = w.length && Math.random() < .7 ? pick(w).topic : pick(TOPIC_ORDER); }
-    else if (t === "all") t = pick(TOPIC_ORDER);
-    const q = genQuestion(t); host.innerHTML = "";
-    host.append(questionView(q, { instant: true, onAnswer: ok => { count++; if (ok) right++; record(q, ok); $("#score").textContent = `${right}/${count}`; host.append(h("button", { class: "btn", onclick: next }, "שאלה הבאה ←")); } }));
+    const q = nextQ(); host.innerHTML = "";
+    host.append(questionView(q, { instant: true, onAnswer: ok => { count++; if (ok) right++; record(q, ok); $("#score").textContent = `${right}/${count}`; const nb = h("button", { class: "btn big", style: "width:100%", onclick: next }, "שאלה הבאה ←"); host.append(nb); setTimeout(() => { try { nb.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { } }, 60); } }));
   }
   next();
 }
+
+/* ---- שאלון קצר: מזהה במה לחזק ומעדכן את כל הנתונים ---- */
+function quizQs(arg) {
+  if (arg.scope === "all") return TOPIC_ORDER.map(id => genQuestion(id)).filter(Boolean);
+  if (arg.scope === "topic") { const n = TOPICS[arg.topic].gens.length; return shuffle([...Array(n).keys()]).slice(0, 6).map(i => genQuestion(arg.topic, i)).filter(Boolean); }
+  const used = new Set(), out = [];
+  for (let t = 0; t < 500 && out.length < 5; t++) { const id = pick(TOPIC_ORDER), gi = rnd(TOPICS[id].gens.length), key = id + gi; if (used.has(key)) continue; const q = genQuestion(id, gi); if (q && lessonsOfSrc(q.src).includes(arg.l)) { used.add(key); out.push(q); } }
+  return out.length >= 3 ? out : out.concat([...Array(5 - out.length)].map(() => smartQuestion()));
+}
+function quiz(app, arg) {
+  if (!arg || !arg.scope) {
+    app.append(h("div", { class: "card" }, h("h2", { style: "margin:0 0 6px" }, "⚡ שאלון קצר"), h("p", { class: "muted" }, "כמה שאלות בלבד כדי לדעת במה לחזק. התוצאות מתעדכנות במפת הלמידה ומשפיעות על התרגול החכם."),
+      h("button", { class: "btn big", style: "width:100%", onclick: () => go("quiz", { scope: "all" }) }, "🌐 כל הנושאים – שאלה מכל נושא")),
+      det("🔢 על שיעור מסוים", h("div", { class: "lmap" }, ...LESSONS.map(l => h("button", { class: "lchip " + lessonStatus(l), "aria-label": `שאלון על שיעור ${l}`, onclick: () => go("quiz", { scope: "lesson", l }) }, String(l))))),
+      det("📚 על נושא מסוים", h("div", { class: "grid" }, ...TOPIC_ORDER.map(id => h("button", { class: "tile", onclick: () => go("quiz", { scope: "topic", topic: id }) }, TOPICS[id].he)))));
+    return;
+  }
+  const qs = quizQs(arg); const res = []; let idx = 0;
+  const bar = h("i", { style: "width:0%" }), host = h("div");
+  app.append(h("div", { class: "row", style: "flex-wrap:nowrap" }, h("button", { class: "btn alt", style: "padding:8px 14px", "aria-label": "יציאה", onclick: () => go("quiz") }, "✕"), h("div", { class: "bar", style: "flex:1;height:14px" }, bar), h("span", { class: "muted", id: "qzc" }, "")), host);
+  function show() {
+    if (idx >= qs.length) return done();
+    const q = qs[idx]; host.innerHTML = ""; bar.style.width = (100 * idx / qs.length) + "%"; $("#qzc").textContent = `${idx + 1}/${qs.length}`;
+    host.append(questionView(q, { instant: true, onAnswer: ok => { record(q, ok); res.push({ q, ok }); const nb = h("button", { class: "btn big", style: "width:100%", onclick: () => { idx++; show(); } }, idx + 1 >= qs.length ? "לתוצאות ←" : "הבאה ←"); host.append(nb); setTimeout(() => { try { nb.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { } }, 60); } }));
+  }
+  function done() {
+    bar.style.width = "100%"; host.innerHTML = ""; const r = res.filter(x => x.ok).length; const wrong = res.filter(x => !x.ok);
+    const lessons = [...new Set(res.flatMap(x => lessonsOfSrc(x.q.src)))].sort((a, b) => a - b);
+    host.append(h("div", { class: "card", style: "text-align:center" }, h("h2", { style: "margin:0" }, `${r} / ${res.length}`), h("p", {}, r === res.length ? "מצוין! הכל נכון 🎉" : wrong.length > res.length / 2 ? "יש מה לחזק – הנה מה שכדאי לעשות:" : "יפה! כמה נקודות לחיזוק:")),
+      wrong.length ? h("div", { class: "card" }, h("h3", { style: "margin:0 0 6px" }, "לחזק"), ...wrong.map(x => h("div", { style: "margin:8px 0;padding-bottom:8px;border-bottom:1px solid var(--line)" }, h("div", { html: x.q.prompt }), h("div", { class: "fb good", style: "margin-top:6px" }, h("span", { class: "ltr", html: fmtAns(x.q) }), h("div", { class: "src", style: "margin-top:4px" }, srcNode(x.q.src)))))) : null,
+      h("div", { class: "card" }, h("h3", { style: "margin:0 0 6px" }, "מפת השיעורים בשאלון"), h("div", { class: "lmap" }, ...lessons.map(l => h("button", { class: "lchip " + lessonStatus(l), onclick: () => openSlide(l, 1), "aria-label": `שיעור ${l}` }, String(l))))),
+      h("div", { class: "row" }, h("button", { class: "btn big", onclick: () => go("practice", { smart: true }) }, "▶ תרגל את החלש"), h("button", { class: "btn alt", onclick: () => go("quiz", arg) }, "שאלון נוסף"), h("button", { class: "btn alt", onclick: () => go("home") }, "לבית")));
+  }
+  show();
+}
+
 
 /* ---- מבחן סימולציה ---- */
 function examMenu(app) {
@@ -649,24 +743,36 @@ function exam(app, arg) {
   }
 }
 
-/* ---- כרטיסיות מושגים (חזרה מרווחת) ---- */
+/* ---- כרטיסיות מושגים (חזרה מרווחת, נשמרות ומשפיעות על שאר התרגול) ---- */
 const BOX_DAYS = [0, 1, 3, 7, 14, 30];
 function flash(app) {
   const now = Date.now();
   const due = TERMS.map((t, i) => ({ t, i, s: ST.srs[i] || { box: 0, due: 0 } })).filter(x => x.s.due <= now);
-  const order = shuffle(due);
-  const host = h("div");
-  app.append(h("div", { class: "card" }, h("h2", {}, "כרטיסיות מושגים"), h("p", { class: "muted" }, `${due.length} כרטיסיות לחזרה היום מתוך ${TERMS.length}. לחץ על הכרטיס כדי לראות את ההגדרה מהשקפים.`)), host);
-  let idx = 0;
+  const mv = x => { const m = kMastery("C:" + x.i); return (m === null ? 0.5 : m) + (Math.random() - 0.5) * 0.35; };
+  const order = due.slice().sort((a, b) => mv(a) - mv(b));
+  const host = h("div"); const info = h("div", { class: "muted", style: "font-size:13px" });
+  let know = 0, dont = 0, idx = 0; const missed = new Set(); const again = new Set();
+  app.append(h("div", { class: "card" }, h("h2", { style: "margin:0 0 4px" }, "🃏 כרטיסיות מושגים"), h("div", { class: "muted" }, `${due.length} לחזרה מתוך ${TERMS.length} · 💾 נשמר אוטומטית ומשפיע על התרגול החכם`), info), host);
+  function paintInfo() { info.textContent = `ידעתי ${know} · לא ידעתי ${dont} · נשארו ${Math.max(0, order.length - idx)}`; }
   function showCard() {
-    host.innerHTML = "";
-    if (idx >= order.length) { host.append(h("div", { class: "card" }, h("p", {}, due.length ? "סיימת את כל הכרטיסיות להיום 🎉" : "אין כרטיסיות לחזרה כרגע."), h("button", { class: "btn alt", onclick: () => { TERMS.forEach((t, i) => { ST.srs[i] = { box: 0, due: 0 }; }); save(ST); go("flash"); } }, "אפס והתחל מחדש"))); return; }
+    host.innerHTML = ""; paintInfo();
+    if (idx >= order.length) {
+      const weak = [...missed].map(i => TERMS[i]);
+      host.append(h("div", { class: "card" }, h("p", {}, due.length ? `סיימת! ידעת ${know}, לא ידעת ${dont}.` : "אין כרטיסיות לחזרה כרגע – הכל מעודכן 🎉"),
+        weak.length ? h("div", {}, h("b", {}, "מושגים לחיזוק:"), ...weak.map(t => h("div", { style: "margin:6px 0" }, t.term, " ", srcNode(`שיעור ${t.quotes[0].l}, שקף ${t.quotes[0].s}`, "")))) : null,
+        h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "btn big", onclick: () => go("practice", { topic: "concepts" }) }, "תרגל שאלות על מושגים"), h("button", { class: "btn alt", onclick: () => { if (confirm("לאפס את כל ההתקדמות בכרטיסיות?")) { TERMS.forEach((t, i) => { ST.srs[i] = { box: 0, due: 0 }; delete ST.k["C:" + i]; }); save(ST); go("flash"); } } }, "אפס"))));
+      return;
+    }
     const c = order[idx]; let flipped = false;
     const card = h("div", { class: "card flash" }); const front = () => { card.innerHTML = ""; card.append(h("div", {}, c.t.term), c.t.en ? h("div", { class: "muted ltr" }, c.t.en) : null, h("small", { class: "muted" }, "(לחץ להצגת ההגדרה)")); };
     const back = () => { card.innerHTML = ""; card.append(h("div", { class: "back" }, ...c.t.quotes.map(q => h("p", {}, `"${q.q}"`, h("br"), h("span", { class: "src" }, slideBtn(`שיעור ${q.l}, שקף ${q.s}`, q.l, q.s)))))); };
     front(); card.onclick = () => { flipped = !flipped; flipped ? back() : front(); };
-    const rate = ok => { const s = ST.srs[c.i] || { box: 0, due: 0 }; s.box = ok ? Math.min(s.box + 1, BOX_DAYS.length - 1) : 0; s.due = now + (ok ? BOX_DAYS[s.box] : 0) * 86400000 + (ok ? 0 : 60000); ST.srs[c.i] = s; save(ST); idx++; showCard(); };
-    host.append(card, h("div", { class: "row" }, h("button", { class: "btn bad", onclick: () => rate(false) }, "לא ידעתי"), h("button", { class: "btn ok", onclick: () => rate(true) }, "ידעתי"), h("span", { class: "pill" }, `${idx + 1}/${order.length}`)));
+    const rate = ok => {
+      const s = ST.srs[c.i] || { box: 0, due: 0 }; s.box = ok ? Math.min(s.box + 1, BOX_DAYS.length - 1) : 0; s.due = ok ? Date.now() + BOX_DAYS[s.box] * 86400000 : Date.now(); ST.srs[c.i] = s;
+      kRecord(["T:concepts", "C:" + c.i, ...[...new Set(c.t.quotes.map(q => "L:" + q.l))]], ok); if (ok) know++; else { dont++; missed.add(c.i); if (!again.has(c.i)) { again.add(c.i); order.push(c); } }
+      idx++; showCard();
+    };
+    host.append(card, h("div", { class: "row" }, h("button", { class: "btn bad big", style: "flex:1", onclick: () => rate(false) }, "❌ לא ידעתי"), h("button", { class: "btn ok big", style: "flex:1", onclick: () => rate(true) }, "✅ ידעתי")));
   }
   showCard();
 }

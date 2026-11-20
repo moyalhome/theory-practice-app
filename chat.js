@@ -126,7 +126,7 @@ function ansChord(q) {
   const useQ = /אקורד|תווי|chord/.test(q); CH_RE.lastIndex = 0; let m; const found = [];
   while ((m = CH_RE.exec(q))) found.push(m);
   const pick1 = found.find(f => f[3]) || (useQ ? found[0] : null); if (!pick1) return null;
-  const root = pick1[1] + (pick1[2] ? pick1[2].replace("♯", "#").replace("♭", "b") : ""); const suf = chordSuffix(pick1[3]); const d = CH_DEF[suf]; if (!d) return null;
+  const root = pick1[1] + (pick1[2] ? pick1[2].replace("♯", "#").replace("♭", "b") : ""); let rawSuf = pick1[3]; if (!rawSuf) { const w = chordSuffixFromWords(q); if (w !== null) rawSuf = w; } const suf = chordSuffix(rawSuf); const d = CH_DEF[suf]; if (!d) return null;
   const ns = d.semis.map((s, i) => spell(root, d.steps[i], s, suf === "dim7"));
   if (ns.some(x => !x)) return { html: `האקורד ${NL(root + suf)} דורש דאבל דיאז/במול בכתיב הרגיל.`, src: CH_SRC[suf] };
   const how = suf === "" ? "מז'ור: טרצה גדולה (2 טונים) ואז קטנה (1.5)." : suf === "m" ? "מינור: טרצה קטנה (1.5 טונים) ואז גדולה (2)." : suf === "dim" ? "מוקטן: 1.5 + 1.5 טונים." : suf === "aug" ? "מוגדל: 2 + 2 טונים." : suf === "5" ? "שורש + קווינטה, בלי הטרצה – לא ניתן לקבוע מז'ור/מינור." : suf === "sus2" || suf === "sus4" ? "הטרצה מוחלפת בדרגה שנייה (Sus2) או רביעית (Sus4) – \"השהיית פתרון\"." : ({ maj7: "משולש מז'ור + ספטימה גדולה.", "7": "משולש מז'ור + ספטימה קטנה (השבע יוצר טריטון עם הטרצה).", m7: "משולש מינור + ספטימה קטנה.", "ø7": "משולש מוקטן + ספטימה קטנה.", m7b5: "משולש מוקטן + ספטימה קטנה.", dim7: "משולש מוקטן + ספטימה מוקטנת." })[suf];
@@ -204,7 +204,7 @@ function lineSearch(q, k = 4) {
 }
 
 /* שאלות "איך בונים אקורד/סולם X" בלי תו: מדגימים על C לפי כללי הקורס */
-const HOW_RE = /(?:^|\s)(?:איך|כיצד)\s|בונים|בניית|נוסחה|נוסחת|מרכיבים|מורכב/;
+const HOW_RE = /(?:^|\s)(?:איך|כיצד)\s|בונים|בניית|בנוי|בנויה|נבנה|נוסחה|נוסחת|מרכיבים|מורכב|ממה/;
 function chordSuffixFromWords(t) {
   if (/חצי\s*מוקטן|half/i.test(t)) return "ø7";
   if (/מוקטן\s*7|dim\s*7|ספטימה\s*מוקטנת/i.test(t)) return "dim7";
@@ -212,23 +212,65 @@ function chordSuffixFromWords(t) {
   if (/(?:מינור|מינורי)\s*7|minor\s*7/i.test(t)) return "m7";
   if (/מ[זג]['׳]?ור\s*7|major\s*7|maj7/i.test(t)) return "maj7";
   if (/סאס\s*2|sus\s*2/i.test(t)) return "sus2"; if (/סאס\s*4|sus\s*4/i.test(t)) return "sus4";
+  if (/(?:^|\s)7(?:\s|$|\?)/.test(t)) return "7";
   if (/כוח|power/i.test(t)) return "5"; if (/מוגדל/.test(t)) return "aug"; if (/מוקטן/.test(t)) return "dim"; if (/מינור/.test(t)) return "m"; if (/מ[זג]['׳]?ור/.test(t)) return "";
   return null;
 }
+/* שאלה על אקורד לפי שם בלבד (בלי תו): "מה זה אקורד major 7", "אקורד מינור", "מז'ור 7" → מראים את בנייתו על C */
+function chordIntent(q) {
+  const sfx = chordSuffixFromWords(q); if (sfx === null || sfx === "5" || sfx === "sus2" || sfx === "sus4") return false;
+  if (/אקורד|ספטאקורד/.test(q)) return true;
+  return /(?:^|\s)7(?:\s|$|\?)|ø7/.test(q) && /(?:מ[זג]'?ור|מינור|מוקטן|דומיננט|חצי)/.test(q);
+}
 function demoCalc(q) {
   const lead = '<span class="muted">לדוגמה על C:</span> ';
-  if (/אקורד|ספטאקורד|משולש/.test(q)) { const sfx = chordSuffixFromWords(q); if (sfx !== null) { const a = ansChord("אקורד C" + sfx); if (a) return { parts: [{ kind: "calc", html: lead + a.html }], sources: (a.src || []).map(([l, s]) => ({ l, s })) }; } }
+  if (/אקורד|ספטאקורד|משולש|(?:^|\s)7(?:\s|$|\?)/.test(q)) { const sfx = chordSuffixFromWords(q); if (sfx !== null) { const a = ansChord("אקורד C" + sfx); if (a) return { parts: [{ kind: "calc", html: lead + a.html }], sources: (a.src || []).map(([l, s]) => ({ l, s })) }; } }
   if (/סולם|פנטטוני|מודוס|דורי|פריגי|לידי|מיקסולידי|אאולי|לוקריין|איוניין|הרמוני|מלודי|בלוז/.test(q)) { const a = ansScale(q, ["C"]); if (a) return { parts: [{ kind: "calc", html: lead + a.html }], sources: (a.src || []).map(([l, s]) => ({ l, s })) }; }
   return null;
 }
 
+/* ---- תרגום שאלות: אנגלית / עברית / מספרים → מונחי הקורס ----
+   "major" = מז'ור, "seven"/"שבע"/"7th" = 7, "minor third from E" = "טרצה קטנה מ-E" וכו' */
+const EN_DEG = { second: "סקונדה", "2nd": "סקונדה", third: "טרצה", "3rd": "טרצה", fourth: "קוורטה", "4th": "קוורטה", fifth: "קווינטה", "5th": "קווינטה", sixth: "סקסטה", "6th": "סקסטה", seventh: "ספטימה", "7th": "ספטימה", octave: "אוקטבה" };
+const EN_WORDS = [
+  [/\bpower\s*chords?\b/gi, "אקורד כוח"], [/\btriads?\b/gi, "אקורד משולש"], [/\bchords?\b/gi, "אקורד"], [/\bscales?\b/gi, "סולם"], [/\bintervals?\b/gi, "מרווח"], [/\btritone\b/gi, "טריטון"], [/\bunison\b/gi, "פרימה"],
+  [/\bpentatonic\b/gi, "פנטטוני"], [/\bblues\s*scale\b/gi, "בלוז סקייל"], [/\bblues\b/gi, "בלוז"], [/\bharmonic\b/gi, "הרמוני"], [/\bmelodic\b/gi, "מלודי"], [/\bnatural\b/gi, "טבעי"],
+  [/\bdorian\b/gi, "דורי"], [/\bphrygian\b/gi, "פריגי"], [/\blydian\b/gi, "לידי"], [/\bmixolydian\b/gi, "מיקסולידי"], [/\baeolian\b/gi, "אאולי"], [/\blocrian\b/gi, "לוקריין"], [/\bionian\b/gi, "איוניין"], [/\bmodes?\b/gi, "מודוס"],
+  [/\bsub\s*dominant\b/gi, "סאב דומיננטה"], [/\bsub\s*mediant\b/gi, "סאב מדיאנטה"], [/\bsuper\s*tonic\b/gi, "סופרטוניקה"], [/\bmediant\b/gi, "מדיאנטה"], [/\bdominant\b/gi, "דומיננטה"], [/\btonic\b/gi, "טוניקה"], [/\bleading\s*tone\b/gi, "טון מוביל"],
+  [/\bcadences?\b/gi, "קדנצה"], [/\binversions?\b/gi, "היפוך"], [/\barpeggio\b/gi, "ארפג'יו"], [/\bsyncopation\b/gi, "סינקופה"], [/\bshuffle\b/gi, "שאפל"], [/\btempo\b/gi, "טמפו"], [/\btime\s*signature\b/gi, "משקל"], [/\bhook\s*line\b/gi, "הוק ליין"], [/\bchromatic\b/gi, "כרומטי"],
+  [/\bsus\s*([24])\b/gi, "סאס $1"], [/\bhalf[-\s]*diminished\b/gi, "חצי מוקטן"], [/\bdiminished\b|\bdim\b/gi, "מוקטן"], [/\baugmented\b|\baug\b/gi, "מוגדל"],
+  [/\bmajor\b|\bmaj\b/gi, "מז'ור"], [/\bminor\b|\bmin\b/gi, "מינור"], [/\bperfect\b/gi, ""],
+  [/\bsemi\s*tones?\b|\bhalf\s*steps?\b/gi, "חצי טון"], [/\bwhole\s*(tones?|steps?)\b/gi, "טון"], [/\bnotes?\b/gi, "תווים"], [/\bverse\b/gi, "בית"], [/\bchorus\b/gi, "פזמון"],
+];
+function translateQuery(raw) {
+  let q = " " + raw + " ";
+  // מילות שאלה באנגלית
+  q = q.replace(/\bwhat\s*(?:is|'s|s)\s+(?:an?|the)?\s*/gi, " מה זה ").replace(/\bwhat\s+are\s+(?:the)?\s*/gi, " מהם ").replace(/\b(?:explain|define|tell\s+me\s+about)\s+(?:an?|the)?\s*/gi, " מה זה ")
+    
+    .replace(/\bdifference\s+between\b/gi, " ההבדל בין ").replace(/\bwhen\s+(?:do\s+(?:i|you|we)\s+)?(?:to\s+)?use\b/gi, " מתי משתמשים ").replace(/\bhow\s+many\b/gi, " כמה ").replace(/\bbetween\s+([A-G][#b]?)\s+and\s+([A-G][#b]?)\b/g, " בין $1 ל-$2 ").replace(/\bfrom\s+([A-G][#b]?)\b/g, " מ-$1 ");
+  if (/\bhow\b/i.test(q) && /\b(?:build|built|construct(?:ed)?|make|made|form(?:ed)?|create(?:d)?)\b/i.test(q)) q = " איך בונים " + q.replace(/\bhow\b|\b(?:do|does|is|are|to|can|i|you|we|build|built|construct(?:ed)?|make|made|form(?:ed)?|create(?:d)?)\b/gi, " ") + " ";
+  const chordCtx = /chord|אקורד|ספטאקורד|dominant|דומיננט/i.test(q);
+  const seven = "(?:7|7th|seven|seventh|שבע|שבעה)";
+  if (chordCtx) {
+    q = q.replace(new RegExp("\b(?:dominant|דומיננט[יית]*)\s*" + seven + "\b", "gi"), " דומיננט ").replace(new RegExp("\b(?:major|maj|מז'ור|מג'ור|מייג'ור)\s*" + seven + "(?![\p{L}\d])", "giu"), " מז'ור 7 ")
+      .replace(new RegExp("\b(?:minor|min|מינור|מיינור)\s*" + seven + "(?![\p{L}\d])", "giu"), " מינור 7 ").replace(new RegExp("(?:diminished|dim|מוקטן)\s*" + seven + "(?![\p{L}\d])", "giu"), " מוקטן 7 ")
+      .replace(/(^|\s)(?:seven|seventh|7th|שבע|שבעה)(?=\s|$|\?)/gi, "$1 7 ");
+  }
+  // מרווחים: "minor third" → "טרצה קטנה"
+  q = q.replace(/\b(minor|min|major|maj|perfect)\s+(second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|seventh|7th|octave)\b/gi, (m, a, d) => " " + EN_DEG[d.toLowerCase()] + (/^(minor|min)$/i.test(a) ? " קטנה" : /^(major|maj)$/i.test(a) ? " גדולה" : "") + " ")
+    .replace(/\b(second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|seventh|7th)\b/gi, (m, d) => " " + EN_DEG[d.toLowerCase()] + " ");
+  EN_WORDS.forEach(([re, he]) => { q = q.replace(re, " " + he + " "); });
+  q = q.replace(/\b(?:a|an|the|of|in|is|are|do|does)\b/g, " ").replace(/מ[יא]יג'ור|מאג'ור/g, "מז'ור").replace(/(^|\s)מז'ור\s+7(?=\s|$|\?)/g, "$1מז'ור 7");
+  return q.replace(/\s+/g, " ").trim();
+}
+
 /* ---- המוח של הצ'אט ---- */
 function chatAnswer(raw) {
-  const q = solfegeToLatin(raw.trim()); const notes = findNotes(q);
+  const q = solfegeToLatin(translateQuery(raw.trim())); const notes = findNotes(q);
   const scaleWords = /סולם|פנטטוני|הרמוני|מלודי|דורי|פריגי|לידי|מיקסולידי|אאולי|לוקריין|איוניין|בלוז\s*סקייל|blues\s*scale/i.test(q) && !/אקורד/.test(q);
   const calc = ansSlideRef(q) || ansIvSize(q) || ansInterval(q, notes) || ansScaleChords(q, notes) || (scaleWords ? (ansScale(q, notes) || ansChord(q)) : (ansChord(q) || ansScale(q, notes)));
   if (calc) { const srcs = (calc.src || []).map(([l, s]) => ({ l, s })); return { parts: [{ kind: "calc", html: calc.html }], sources: srcs, open: calc.open }; }
-  if (!notes.length && HOW_RE.test(q) && !DEF_RE.test(q)) { const demo = demoCalc(q); if (demo) return demo; }
+  if (!notes.length && !CMP_RE.test(q) && ((HOW_RE.test(q) && !DEF_RE.test(q)) || chordIntent(q))) { const demo = demoCalc(q); if (demo) return demo; }
   const qt = toks(q); const ms = kbMatches(q); const isDef = DEF_RE.test(q) || (qt.length <= 2 && ms.length > 0);
   // השוואה: שני מושגים או יותר → שורה קצרה לכל אחד
   if (CMP_RE.test(q) && ms.length >= 2) return { parts: ms.slice(0, 3).map(e => briefOf(e, q)), sources: [], compare: true };

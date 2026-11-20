@@ -93,3 +93,31 @@ mark { background:#ffe27a; color:#111; padding:0 2px; border-radius:3px; }
 .key { display:inline-block; padding:3px 10px; border-radius:6px; font-size:13px; color:#111; border:1px solid #9a9a9a; }
 .key.con { background:#83ff79; } .key.dis { background:#ff9b9b; }
 .feel-tag { display:inline-block; margin-top:6px; padding:3px 10px; border-radius:12px; font-size:14px; }
+
+/* ===== ניווט תחתון, מפת למידה, אזורים מתקפלים ===== */
+header { padding:8px 14px; }
+header h1 { margin:0; font-size:17px; }
+.tabbar { position:fixed; bottom:0; left:0; right:0; z-index:20; display:flex; background:var(--card); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+nav.tabbar button { flex:1; border:0; border-radius:0; background:none; color:var(--muted); padding:7px 2px 6px; display:flex; flex-direction:column; align-items:center; gap:1px; cursor:pointer; font-size:12px; min-height:56px; }
+.tabbar button .ti { font-size:22px; line-height:1.1; }
+.tabbar button.on, nav.tabbar button.on { color:var(--acc); font-weight:700; background:color-mix(in srgb, var(--acc) 10%, var(--card)); border-color:transparent; }
+.tabbar button.on .ti { transform:scale(1.12); }
+main { padding-bottom:100px; }
+footer { padding-bottom:80px; }
+.btn.big { font-size:18px; padding:14px 18px; border-radius:14px; }
+.hero { text-align:center; }
+.hero .btn.big { width:100%; }
+.lmap { display:flex; flex-wrap:wrap; gap:8px; }
+.lchip { width:46px; height:46px; border-radius:12px; border:2px solid var(--line); background:var(--bg); color:var(--ink); font-size:17px; font-weight:700; cursor:pointer; }
+.lchip.good { background:color-mix(in srgb, var(--ok) 30%, var(--card)); border-color:var(--ok); }
+.lchip.mid { background:color-mix(in srgb, #e8a317 30%, var(--card)); border-color:#e8a317; }
+.lchip.weak { background:color-mix(in srgb, var(--bad) 30%, var(--card)); border-color:var(--bad); }
+.fold { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:8px 0; padding:0; }
+.fold > summary { cursor:pointer; padding:12px 14px; list-style:none; font-size:16px; }
+.fold > summary::-webkit-details-marker { display:none; }
+.fold > summary::before { content:"◂ "; color:var(--muted); }
+.fold[open] > summary::before { content:"▾ "; }
+.fold > *:not(summary) { margin-left:14px; margin-right:14px; }
+.fold > *:last-child { margin-bottom:12px; }
+.fold-body { padding:0 !important; border:0 !important; margin:0 14px 12px !important; background:none !important; }
+@media (min-width:700px) { .tabbar { max-width:860px; margin:0 auto; border-radius:14px 14px 0 0; border:1px solid var(--line); } }

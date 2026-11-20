@@ -310,7 +310,7 @@ function earRun(app, arg) {
   function answer(it) {
     if (answered) return; answered = true; const ok = it.id === q.item.id; if (ok) right++; else wrong.add(q.item.id);
     const p = per[q.item.he] = per[q.item.he] || { n: 0, r: 0 }; p.n++; if (ok) p.r++;
-    const s = ST.stats["ear:" + kind] = ST.stats["ear:" + kind] || { n: 0, r: 0 }; s.n++; if (ok) s.r++; save(ST); saveEar();
+    const s = ST.stats["ear:" + kind] = ST.stats["ear:" + kind] || { n: 0, r: 0 }; s.n++; if (ok) s.r++; kRecord(["T:ear:" + kind, ...lessonsOfSrc(E.src).map(l => "L:" + l)], ok); saveEar();
     let notes = q.notes.map(n => ({ ...n, color: COL.ok })); let chosenNotes = null;
     if (!ok) chosenNotes = noteSet(E.fam, it, q.rootName, q.rootMidi);
     if (E.fam === "ivl") {

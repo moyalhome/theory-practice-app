@@ -79,6 +79,10 @@ function entryCard(e, q) {
   if (e.kind === "term" && e.quotes.length > 1) card.append(moreBox(e.quotes.slice(1).map(x => ({ l: x.l, s: x.s, q: x.q })), "עוד מהשקפים"));
   return card;
 }
+function entryFold(e) {
+  const body = entryCard(e, ""); body.className = "fold-body"; body.removeChild(body.firstChild);
+  return h("details", { class: "fold" }, h("summary", {}, h("b", {}, e.title), e.en ? h("span", { class: "muted ltr" }, " " + e.en) : null), body);
+}
 function lineRow(r, q) {
   return h("div", { style: "margin:8px 0;padding-bottom:8px;border-bottom:1px solid var(--line)" }, h("div", {}, hl(r.q, q)), h("div", { class: "row", style: "margin-top:4px" }, slideBtn(`שיעור ${r.l}, שקף ${r.s}`, r.l, r.s), h("span", { class: "src" }, LESSON_TITLES[r.l] || "")));
 }
@@ -101,7 +105,7 @@ function refSearchTab(app, arg) {
   let more = 10;
   function run() {
     res.innerHTML = ""; const q = box.value.trim();
-    if (!q) { const es = refEntries().filter(e => !letter || refFirstLetter(e.title) === letter); res.append(h("p", { class: "muted" }, `${es.length} ערכים${letter ? ` באות ${letter}` : " במילון"} – או חפש למעלה בכל המצגות.`)); es.forEach(e => res.append(entryCard(e, ""))); return; }
+    if (!q) { const es = refEntries().filter(e => !letter || refFirstLetter(e.title) === letter); res.append(h("p", { class: "muted" }, `${es.length} ערכים${letter ? ` באות ${letter}` : " במילון"} – או חפש למעלה בכל המצגות.`)); es.forEach(e => res.append(entryFold(e))); return; }
     const defs = refDefMatches(q); const lines = refLineSearch(q);
     if (defs.length) { res.append(h("h3", { style: "margin:12px 0 4px" }, `📖 מושגים ומרווחים (${defs.length})`)); defs.forEach(e => res.append(entryCard(e, q))); }
     res.append(h("h3", { style: "margin:16px 0 4px" }, `📄 מופיע בשקפים (${lines.length})`));
@@ -134,9 +138,9 @@ const TABLE_SLIDES = [
 ];
 function slideThumb(l, s, title) {
   const img = h("img", { alt: `${title} (שיעור ${l}, שקף ${s})`, class: "tbl-img", style: "min-height:180px;background:var(--line)" });
-  const card = h("div", { class: "card" }, h("div", { class: "row", style: "justify-content:space-between" }, h("b", {}, title), slideBtn(`שיעור ${l}, שקף ${s}`, l, s)), h("button", { class: "imgbtn", "aria-label": `פתח ${title}`, onclick: () => openSlide(l, s) }, img));
-  const load = () => slidesLoad(l).then(u => { img.src = u[s - 1]; img.style.minHeight = ""; }).catch(() => { img.replaceWith(h("div", { class: "muted" }, "לא הצלחתי לטעון את השקף")); });
-  if ("IntersectionObserver" in window) { const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); load(); } }, { rootMargin: "300px" }); io.observe(card); } else load();
+  const card = h("details", { class: "fold" }, h("summary", {}, title), h("div", { class: "row", style: "margin:6px 0" }, slideBtn(`שיעור ${l}, שקף ${s}`, l, s)), h("button", { class: "imgbtn", "aria-label": `פתח ${title}`, onclick: () => openSlide(l, s) }, img));
+  let loaded = false;
+  card.addEventListener("toggle", () => { if (!card.open || loaded) return; loaded = true; slidesLoad(l).then(u => { img.src = u[s - 1]; img.style.minHeight = ""; }).catch(() => { img.replaceWith(h("div", { class: "muted" }, "לא הצלחתי לטעון את השקף")); }); });
   return card;
 }
 function refTablesTab(app) {
@@ -152,8 +156,8 @@ function refTablesTab(app) {
 function refFeelTab(app) {
   app.append(h("div", { class: "card" }, h("h2", {}, "🎭 איזה רגש כל סולם נותן"), h("p", { class: "muted" }, "ציטוטים מדויקים מהמצגות (הסבר המרצה: ההבחנה בין שמח לעצוב היא אישית ותלוית תרבות – ראה שיעור 4 שקף 4). כל ציטוט מקושר לשקף.")));
   FEEL.forEach(f => {
-    const card = h("div", { class: "card feel", style: `border-inline-start:6px solid ${f.color}` });
-    card.append(h("div", { class: "row", style: "align-items:baseline" }, h("span", { style: "font-size:24px" }, f.emoji), h("b", { style: "font-size:18px" }, f.name), h("span", { class: "muted ltr" }, f.en)), h("div", { class: "feel-tag", style: `background:${f.color}22;border:1px solid ${f.color}` }, f.feel));
+    const card = h("details", { class: "fold feel", style: `border-inline-start:6px solid ${f.color}` });
+    card.append(h("summary", {}, h("span", { style: "font-size:22px" }, f.emoji + " "), h("b", {}, f.name), h("div", { class: "feel-tag", style: `background:${f.color}22;border:1px solid ${f.color}` }, f.feel)));
     f.q.forEach(([l, s, q]) => card.append(h("div", { style: "margin:8px 0" }, `"${q}" `, slideBtn(`שיעור ${l}, שקף ${s}`, l, s))));
     app.append(card);
   });
@@ -161,7 +165,7 @@ function refFeelTab(app) {
 
 /* ---------- מסך ראשי ---------- */
 function ref(app, arg) {
-  const tabs = [["search", "🔎 חיפוש ומילון"], ["tables", "📊 טבלאות"], ["feel", "🎭 רגשות"]]; const cur = (arg && arg.tab) || "search";
+  const tabs = [["search", "🔎 מילון"], ["slides", "📚 מצגות"], ["tables", "📊 טבלאות"], ["feel", "🎭 רגשות"]]; const cur = (arg && arg.tab) || "search";
   app.append(h("div", { class: "seg", role: "tablist" }, ...tabs.map(([k, t]) => h("button", { class: "btn " + (k === cur ? "" : "alt"), role: "tab", "aria-selected": k === cur ? "true" : "false", onclick: () => go("ref", { tab: k }) }, t))));
-  ({ search: refSearchTab, tables: refTablesTab, feel: refFeelTab })[cur](app, arg);
+  ({ search: refSearchTab, tables: refTablesTab, feel: refFeelTab, slides: slidesView })[cur](app, arg);
 }
