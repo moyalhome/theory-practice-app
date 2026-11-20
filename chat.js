@@ -169,7 +169,7 @@ function buildKB() {
     const lines = vs.map(i => `${i.he} (${i.en}): ${tones(i.semi)} טונים (${ex(i)}), ${TYPE_HE[i.type]}`);
     const steps = vs[0].steps + 1;
     const intro = g === "פרימה" ? "מרווח של 0 טונים – אותו תו פעמיים (יוניסון)." : `מרווח של ${steps} צעדים בין שמות תווים (למשל מ-C עד ${spell("C", vs[0].steps, vs[0].semi).replace(/[#b]+$/, "")}).`;
-    KB.push({ kind: "interval", title: g === "פרימה" ? "פרימה (יוניסון)" : g, en: vs[0].en.replace(/^(Minor|Major|Perfect)\s*/, ""), aliases: g === "פרימה" ? [["פרימה"], ["יוניסון"]] : [aliasToks(g)], html: `${intro}<br>${lines.join("<br>")}`, srcs: [[3, 8], [3, 7]] });
+    KB.push({ kind: "interval", title: g === "פרימה" ? "פרימה (יוניסון)" : g, en: "", aliases: g === "פרימה" ? [["פרימה"], ["יוניסון"]] : [aliasToks(g)], html: `${intro}<br>${lines.join("<br>")}`, srcs: [[3, 8], [3, 7]] });
   });
 }
 const DEF_RE = /^\s*(?:מה\s+(?:זה|זאת|הוא|היא|הם|הן|הפירוש\s+של|ההגדרה\s+של|הכוונה\s+ב)|מהו|מהי|מהם|מהן|הסבר|תסביר|תסבירי|פירוש|הגדרה|הגדר|ספר\s+לי\s+על|what\s+is)(?![א-ת])/i;
