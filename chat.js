@@ -246,7 +246,7 @@ function slideBlock(l, s) {
   const d = CORPUS.find(x => x.l === l && x.s === s); if (!d) return h("div", {}, "השקף לא נמצא.");
   return h("div", { class: "fb good", style: "white-space:pre-wrap" }, h("b", {}, `שיעור ${l} – ${LESSON_TITLES[l]}, שקף ${s}`), h("br"), d.t);
 }
-const slideRef = (l, s) => h("button", { class: "pill", style: "cursor:pointer;margin-inline-start:4px", onclick: () => { if (typeof openSlide === "function") openSlide(l, s); } }, `שיעור ${l}, שקף ${s}`);
+const slideRef = (l, s) => slideBtn(`שיעור ${l}, שקף ${s}`, l, s);
 function moreBox(items, label) {
   const more = h("div", { style: "display:none;margin-top:6px" }, ...items.map(x => h("div", { style: "margin:4px 0" }, `"${x.q}" `, slideRef(x.l, x.s))));
   const btn = h("button", { class: "pill", style: "cursor:pointer;margin-top:6px", onclick: () => { const open = more.style.display === "none"; more.style.display = open ? "" : "none"; btn.textContent = open ? "הסתר" : `${label} (${items.length})`; } }, `${label} (${items.length})`);

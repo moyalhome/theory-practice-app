@@ -506,24 +506,26 @@ function record(q, ok) {
 function topicStats(id) { let n = 0, r = 0; for (const k in ST.stats) if (k.startsWith(id + ":")) { n += ST.stats[k].n; r += ST.stats[k].r; } return { n, r }; }
 
 /* ===================== ממשק ===================== */
-const NAV = [["home", "בית"], ["chat", "צ'אט"], ["practice", "תרגול נושאים"], ["ear", "אימון אוזן"], ["flash", "כרטיסיות מושגים"], ["exam", "מבחן סימולציה"], ["ref", "טבלאות וחיפוש"]];
+const NAV = [["home", "בית"], ["chat", "צ'אט"], ["practice", "תרגול נושאים"], ["ear", "אימון אוזן"], ["flash", "כרטיסיות מושגים"], ["exam", "מבחן סימולציה"], ["ref", "טבלאות ומילון"], ["slides", "מצגות"]];
 let view = "home";
 function renderNav() {
   const nav = $("#nav"); nav.innerHTML = "";
   NAV.forEach(([id, t]) => nav.append(h("button", { class: view === id ? "on" : "", onclick: () => go(id) }, t)));
 }
-function go(v, arg) { if (LEAVE_GUARD) { if (!LEAVE_GUARD(v, arg)) return; if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } LEAVE_GUARD = null; FLUSH_ACTIVE = null; } stopAudio(); if (EXAM_TIMER) { clearInterval(EXAM_TIMER); EXAM_TIMER = null; } view = v; renderNav(); const app = $("#app"); app.innerHTML = ""; ({ home, chat, practice, ear, flash, exam, ref })[v](app, arg); window.scrollTo(0, 0); }
+function go(v, arg) { if (LEAVE_GUARD) { if (!LEAVE_GUARD(v, arg)) return; if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } LEAVE_GUARD = null; FLUSH_ACTIVE = null; } stopAudio(); if (EXAM_TIMER) { clearInterval(EXAM_TIMER); EXAM_TIMER = null; } view = v; renderNav(); const app = $("#app"); app.innerHTML = ""; ({ home, chat, practice, ear, flash, exam, ref, slides: slidesView })[v](app, arg); window.scrollTo(0, 0); }
 
 /* ---- בית ---- */
 function home(app) {
   const smart = weakSpots();
+  const qs = h("input", { class: "search", type: "search", placeholder: "🔎 חפש מושג או מילה בכל המצגות (ספטימה, טריטון, פנטטוני…)", style: "direction:rtl;text-align:right;font-size:17px", autocomplete: "off", onkeydown: e => { if (e.key === "Enter" && e.target.value.trim()) go("ref", { tab: "search", q: e.target.value.trim() }); } });
   app.append(
+    h("div", { class: "card" }, qs),
     h("div", { class: "card" }, h("h2", {}, "ברוך הבא"), h("p", {}, "מבחן הסיום מתקרב – הכל כאן מבוסס אך ורק על מצגות הקורס (שיעורים 1–15). בכל שאלה מופיע מראה מקום (שיעור, שקף) כדי שתוכל לחזור לחומר."),
       h("div", { class: "row" }, h("button", { class: "btn", onclick: () => go("practice", { smart: true }) }, "▶ תרגול חכם (מתמקד בנקודות חלשות)"), h("button", { class: "btn alt", onclick: () => go("exam") }, "מבחן סימולציה"), h("button", { class: "btn alt", onclick: () => go("ear") }, "אימון אוזן"))),
     h("div", { class: "card" }, h("h3", {}, "התקדמות לפי נושא"), ...TOPIC_ORDER.map(id => { const s = topicStats(id); const pct = s.n ? Math.round(100 * s.r / s.n) : 0; return h("div", { style: "margin:8px 0" }, h("div", { class: "row", style: "justify-content:space-between" }, h("span", {}, TOPICS[id].he), h("span", { class: "muted" }, s.n ? `${pct}% (${s.r}/${s.n})` : "טרם תורגל")), h("div", { class: "bar" }, h("i", { style: `width:${pct}%` }))); })),
     h("div", { class: "card" }, h("h3", {}, "נקודות לחיזוק"), smart.length ? h("ul", {}, ...smart.map(w => h("li", {}, `${TOPICS[w.topic].he} – ${GEN_HE[w.gen] || w.gen}:${Math.round(100 * w.r / w.n)}% (${w.r}/${w.n})`))) : h("p", { class: "muted" }, "עוד אין מספיק נתונים. התחל לתרגל!")),
     location.protocol.startsWith("http") ? h("div", { class: "card" }, h("h3", {}, "📱 התקנה בטלפון"), h("p", {}, "אייפון (Safari): לחץ על כפתור השיתוף ⬆︎ ← \"הוסף למסך הבית\". אנדרואיד (Chrome): תפריט ⋮ ← \"התקן אפליקציה\" / \"הוסף למסך הבית\". אחרי ההתקנה האפליקציה נפתחת במסך מלא וגם עובדת בלי אינטרנט."), window.__installPrompt ? h("button", { class: "btn", onclick: () => window.__installPrompt.prompt() }, "התקן עכשיו") : null) : null,
-    h("div", { class: "card" }, h("h3", {}, "חומר לימוד"), h("p", {}, "הסיכום המלא (PDF) ושבעה-עשר קבצי המצגות המתומללים נמצאים בתיקיית הלימודים. ", h("a", { href: "../סיכום-מלא-תאוריה.pdf", target: "_blank" }, "פתח את הסיכום המלא (PDF)")))
+    h("div", { class: "card" }, h("h3", {}, "📚 חומר לימוד"), h("p", {}, "השקפים המקוריים של כל השיעורים נמצאים כאן באפליקציה – מכל שאלה אפשר לקפוץ ישר לשקף."), h("div", { class: "row" }, h("button", { class: "btn", onclick: () => go("slides") }, "📚 פתח את המצגות"), h("button", { class: "btn alt", onclick: () => go("ref", { tab: "tables" }) }, "📊 טבלאות"), h("button", { class: "btn alt", onclick: () => go("ref", { tab: "feel" }) }, "🎭 רגשות לכל סולם"), h("button", { class: "btn alt", onclick: slidesOpenSummaryPdf }, "📕 הסיכום המלא (PDF)")))
   );
 }
 function weakSpots() {
@@ -540,7 +542,7 @@ function questionView(q, opts) { // opts: {onAnswer(ok), showNow:true/false, pre
     if (done) return; done = true;
     if (opts.instant) {
       fbWrap.innerHTML = "";
-      fbWrap.append(h("div", { class: "fb " + (ok ? "good" : "no") }, h("b", {}, ok ? "✔ נכון" : "✘ לא נכון"), " ", ok ? "" : h("span", {}, "התשובה הנכונה: ", h("span", { class: "ltr", html: fmtAns(q) })), h("div", { html: q.expl || "" }), h("div", { class: "src" }, "מקור: " + q.src)));
+      fbWrap.append(h("div", { class: "fb " + (ok ? "good" : "no") }, h("b", {}, ok ? "✔ נכון" : "✘ לא נכון"), " ", ok ? "" : h("span", {}, "התשובה הנכונה: ", h("span", { class: "ltr", html: fmtAns(q) })), h("div", { html: q.expl || "" }), h("div", { class: "src" }, srcNode(q.src))));
     }
     opts.onAnswer(ok, chosenText);
   }
@@ -633,7 +635,7 @@ function exam(app, arg) {
     const pct = Math.round(100 * right / qs.length); ST.exams.push({ t: Date.now(), pct, n: qs.length }); save(ST);
     app.append(h("div", { class: "card" }, h("h2", {}, `ציון: ${pct}% (${right}/${qs.length})`), ...Object.entries(byTopic).map(([t, b]) => h("div", { style: "margin:6px 0" }, h("div", { class: "row", style: "justify-content:space-between" }, TOPICS[t].he, `${b.r}/${b.n}`), h("div", { class: "bar" }, h("i", { style: `width:${100 * b.r / b.n}%` })))), h("button", { class: "btn", onclick: () => go("exam") }, "מבחן נוסף")),
       h("h3", {}, wrong.length ? "תיקון הטעויות" : "אין טעויות – כל הכבוד!"),
-      ...wrong.map(({ q, a }) => h("div", { class: "card" }, h("div", { class: "prompt", html: q.prompt }), h("div", { class: "fb no" }, "התשובה שלך: ", a ? (q.kind === "mc" ? q.options[a.i] : a.txt) : "לא נענתה"), h("div", { class: "fb good" }, "נכון: ", h("span", { class: "ltr", html: fmtAns(q) }), h("div", { html: q.expl || "" }), h("div", { class: "src" }, "מקור: " + q.src)))));
+      ...wrong.map(({ q, a }) => h("div", { class: "card" }, h("div", { class: "prompt", html: q.prompt }), h("div", { class: "fb no" }, "התשובה שלך: ", a ? (q.kind === "mc" ? q.options[a.i] : a.txt) : "לא נענתה"), h("div", { class: "fb good" }, "נכון: ", h("span", { class: "ltr", html: fmtAns(q) }), h("div", { html: q.expl || "" }), h("div", { class: "src" }, srcNode(q.src))))));
     window.scrollTo(0, 0);
   }
 }
@@ -652,25 +654,10 @@ function flash(app) {
     if (idx >= order.length) { host.append(h("div", { class: "card" }, h("p", {}, due.length ? "סיימת את כל הכרטיסיות להיום 🎉" : "אין כרטיסיות לחזרה כרגע."), h("button", { class: "btn alt", onclick: () => { TERMS.forEach((t, i) => { ST.srs[i] = { box: 0, due: 0 }; }); save(ST); go("flash"); } }, "אפס והתחל מחדש"))); return; }
     const c = order[idx]; let flipped = false;
     const card = h("div", { class: "card flash" }); const front = () => { card.innerHTML = ""; card.append(h("div", {}, c.t.term), c.t.en ? h("div", { class: "muted ltr" }, c.t.en) : null, h("small", { class: "muted" }, "(לחץ להצגת ההגדרה)")); };
-    const back = () => { card.innerHTML = ""; card.append(h("div", { class: "back" }, ...c.t.quotes.map(q => h("p", {}, `"${q.q}"`, h("br"), h("span", { class: "src" }, `שיעור ${q.l}, שקף ${q.s}`))))); };
+    const back = () => { card.innerHTML = ""; card.append(h("div", { class: "back" }, ...c.t.quotes.map(q => h("p", {}, `"${q.q}"`, h("br"), h("span", { class: "src" }, slideBtn(`שיעור ${q.l}, שקף ${q.s}`, q.l, q.s)))))); };
     front(); card.onclick = () => { flipped = !flipped; flipped ? back() : front(); };
     const rate = ok => { const s = ST.srs[c.i] || { box: 0, due: 0 }; s.box = ok ? Math.min(s.box + 1, BOX_DAYS.length - 1) : 0; s.due = now + (ok ? BOX_DAYS[s.box] : 0) * 86400000 + (ok ? 0 : 60000); ST.srs[c.i] = s; save(ST); idx++; showCard(); };
     host.append(card, h("div", { class: "row" }, h("button", { class: "btn bad", onclick: () => rate(false) }, "לא ידעתי"), h("button", { class: "btn ok", onclick: () => rate(true) }, "ידעתי"), h("span", { class: "pill" }, `${idx + 1}/${order.length}`)));
   }
   showCard();
 }
-
-/* ---- טבלאות וחיפוש ---- */
-function ref(app) {
-  const res = h("div");
-  const box = h("input", { class: "search", type: "search", placeholder: "חפש מושג או מילה בהגדרות המילון…", style: "direction:rtl;text-align:right" });
-  const doSearch = () => { const q = box.value.trim(); res.innerHTML = ""; if (!q) return; const m = TERMS.filter(t => (t.term + " " + t.en + " " + t.quotes.map(x => x.q).join(" ")).includes(q)); if (!m.length) res.append(h("p", { class: "muted" }, "לא נמצא.")); m.forEach(t => res.append(h("div", { class: "card" }, h("b", {}, t.term), t.en ? h("span", { class: "muted ltr" }, " " + t.en) : null, ...t.quotes.map(x => h("p", {}, `"${x.q}"`, h("br"), h("span", { class: "src" }, `שיעור ${x.l}, שקף ${x.s}`)))))); };
-  box.addEventListener("input", doSearch);
-  const intTable = h("table", {}, h("tr", {}, ...["מרווח", "אנגלית", "טונים", "חצאי טון", "סוג"].map(x => h("th", {}, x))), ...INTERVALS.map(i => h("tr", {}, h("td", {}, i.he), h("td", { class: "ltr" }, i.en), h("td", {}, tones(i.semi)), h("td", {}, i.semi), h("td", {}, TYPE_HE[i.type]))));
-  const degT = h("table", {}, h("tr", {}, ...["דרגה", "שם", "במז'ור", "במינור (טבעי)"].map(x => h("th", {}, x))), ...DEG_MAJ.map((d, i) => h("tr", {}, h("td", {}, d[0]), h("td", {}, d[1]), h("td", {}, d[2]), h("td", {}, DEG_MIN[i]))));
-  const modeT = h("table", {}, h("tr", {}, ...["מודוס", "תיאור", "ספטאקורד", "שימוש"].map(x => h("th", {}, x))), ...MODES.map(m => h("tr", {}, h("td", {}, m.he), h("td", {}, m.d), h("td", { class: "ltr" }, m.ch), h("td", {}, m.use))));
-  app.append(h("div", { class: "card" }, h("h2", {}, "חיפוש במילון הקורס"), box, res),
-    h("div", { class: "card" }, h("h3", {}, "טבלת המרווחים (שיעור 3)"), intTable), h("div", { class: "card" }, h("h3", {}, "דרגות (שיעורים 4 ו-6)"), degT), h("div", { class: "card" }, h("h3", {}, "מודוסים (שיעור 15)"), modeT),
-    h("div", { class: "card" }, h("p", {}, "לפירוט מלא של כל הטבלאות, הקדנצות והמושגים: ", h("a", { href: "../סיכום-מלא-תאוריה.pdf", target: "_blank" }, "הסיכום המלא (PDF)"))));
-}
-

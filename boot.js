@@ -6,6 +6,7 @@ async function decryptWith(pass) {
   const enc = new TextEncoder();
   const base = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(ENC.salt), iterations: ENC.iter, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  window.SLIDE_KEY = key;   // אותו מפתח פותח גם את קובצי המצגות המוצפנים
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(ENC.iv) }, key, b64(ENC.data));
   return JSON.parse(new TextDecoder().decode(plain));
 }
