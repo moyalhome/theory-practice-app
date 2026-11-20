@@ -100,10 +100,10 @@ function ansInterval(q, notes) {
     a = notes[0]; b = notes[1]; const pa = parse(a), pb = parse(b);
     const steps = (LETTERS.indexOf(pb.l) - LETTERS.indexOf(pa.l) + 7) % 7; const semis = (pc(b) - pc(a) + 12) % 12;
     let iv = INTERVALS.find(i => (i.semi % 12) === semis && i.steps % 7 === steps && i.semi !== 6);
-    if (semis === 6 && (steps === 3 || steps === 4)) { return { html: `<b>${NL(a)} → ${NL(b)}</b>: טריטון (${steps === 3 ? "קוורטה מוגדלת" : "קווינטה מוקטנת"}) – 3 טונים, דיסוננטי.`, src: [[3, 7], [7, 3]] }; }
+    if (semis === 6 && (steps === 3 || steps === 4)) { return { html: `<b>${L(fmtNote(a) + " → " + fmtNote(b))}</b>: טריטון (${steps === 3 ? "קוורטה מוגדלת" : "קווינטה מוקטנת"}) – 3 טונים, דיסוננטי.`, src: [[3, 7], [7, 3]] }; }
     if (iv && semis === 0 && steps === 0) iv = INTERVALS[0];
-    if (!iv) return { html: `<b>${NL(a)} → ${NL(b)}</b>: ${steps + 1} שמות תווים ו-${halves(semis)}. שילוב כזה (מוגדל/מוקטן) לא מופיע בטבלת המרווחים של הקורס.`, src: [[3, 7], [3, 8]] };
-    return { html: `<b>${NL(a)} → ${NL(b)}</b>: ${iv.he} (${iv.en})<br>${halves(iv.semi)} = ${tones(iv.semi)} טונים · ${TYPE_HE[iv.type]}.`, src: [[3, 7], [3, 8], [3, 13]] };
+    if (!iv) return { html: `<b>${L(fmtNote(a) + " → " + fmtNote(b))}</b>: ${steps + 1} שמות תווים ו-${halves(semis)}. שילוב כזה (מוגדל/מוקטן) לא מופיע בטבלת המרווחים של הקורס.`, src: [[3, 7], [3, 8]] };
+    return { html: `<b>${L(fmtNote(a) + " → " + fmtNote(b))}</b>: ${iv.he} (${iv.en})<br>${halves(iv.semi)} = ${tones(iv.semi)} טונים · ${TYPE_HE[iv.type]}.`, src: [[3, 7], [3, 8], [3, 13]] };
   }
   return null;
 }
@@ -127,7 +127,7 @@ function ansChord(q) {
   while ((m = CH_RE.exec(q))) found.push(m);
   const pick1 = found.find(f => f[3]) || (useQ ? found[0] : null); if (!pick1) return null;
   const root = pick1[1] + (pick1[2] ? pick1[2].replace("♯", "#").replace("♭", "b") : ""); const suf = chordSuffix(pick1[3]); const d = CH_DEF[suf]; if (!d) return null;
-  const ns = d.semis.map((s, i) => spell(root, d.steps[i], s));
+  const ns = d.semis.map((s, i) => spell(root, d.steps[i], s, suf === "dim7"));
   if (ns.some(x => !x)) return { html: `האקורד ${NL(root + suf)} דורש דאבל דיאז/במול בכתיב הרגיל.`, src: CH_SRC[suf] };
   const how = suf === "" ? "מז'ור: טרצה גדולה (2 טונים) ואז קטנה (1.5)." : suf === "m" ? "מינור: טרצה קטנה (1.5 טונים) ואז גדולה (2)." : suf === "dim" ? "מוקטן: 1.5 + 1.5 טונים." : suf === "aug" ? "מוגדל: 2 + 2 טונים." : suf === "5" ? "שורש + קווינטה, בלי הטרצה – לא ניתן לקבוע מז'ור/מינור." : suf === "sus2" || suf === "sus4" ? "הטרצה מוחלפת בדרגה שנייה (Sus2) או רביעית (Sus4) – \"השהיית פתרון\"." : ({ maj7: "משולש מז'ור + ספטימה גדולה.", "7": "משולש מז'ור + ספטימה קטנה (השבע יוצר טריטון עם הטרצה).", m7: "משולש מינור + ספטימה קטנה.", "ø7": "משולש מוקטן + ספטימה קטנה.", m7b5: "משולש מוקטן + ספטימה קטנה.", dim7: "משולש מוקטן + ספטימה מוקטנת." })[suf];
   return { html: `<b>${NL(root + suf)}</b> (${d.he}) = ${NLs(ns)}<br>${how}`, src: CH_SRC[suf] };
@@ -165,7 +165,7 @@ function buildKB() {
   });
   IV_GROUPS.forEach(g => {
     const vs = INTERVALS.filter(i => i.he.startsWith(g) || (g === "פרימה" && i.he.includes("יוניסון"))); if (!vs.length) return;
-    const ex = i => `${NL("C")}–${NL(spell("C", i.steps, i.semi))}`;
+    const ex = i => L("C – " + fmtNote(spell("C", i.steps, i.semi)));
     const lines = vs.map(i => `${i.he} (${i.en}): ${tones(i.semi)} טונים (${ex(i)}), ${TYPE_HE[i.type]}`);
     const steps = vs[0].steps + 1;
     const intro = g === "פרימה" ? "מרווח של 0 טונים – אותו תו פעמיים (יוניסון)." : `מרווח של ${steps} צעדים בין שמות תווים (למשל מ-C עד ${spell("C", vs[0].steps, vs[0].semi).replace(/[#b]+$/, "")}).`;

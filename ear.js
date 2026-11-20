@@ -52,7 +52,7 @@ const SEV = [
   { id: "Half dim ø7", he: "Half dim ø7", sym: "ø7", semis: [0, 3, 6, 10], steps: [0, 2, 4, 6], info: "משולש מוקטן + ספטימה קטנה" },
   { id: "Dim 7", he: "Diminished 7", sym: "dim7", semis: [0, 3, 6, 9], steps: [0, 2, 4, 6], info: "משולש מוקטן + ספטימה מוקטנת" },
 ];
-const INV_N3 = ["מצב יסודי", "היפוך ראשון (סקסטאקורד)", "היפוך שני (6/4)"], INV_N4 = ["מצב יסודי", "היפוך ראשון", "היפוך שני", "היפוך שלישי"];
+const INV_N3 = ["מצב יסודי", "היפוך ראשון (סקסטאקורד)", "היפוך שני (קוורטסקסטאקורד 6/4)"], INV_N4 = ["מצב יסודי", "היפוך ראשון (קווינט-סקסטאקורד)", "היפוך שני (טרצ-קוורטאקורד)", "היפוך שלישי (סקונדאקורד)"];   /* שיעור 9 שקפים 9–10; שיעור 14 שקף 6 */
 const INV = []; [...TRI, ...SEV].forEach(b => b.semis.forEach((_, k) => INV.push({ id: b.id + "|" + k, he: `${b.he} – ${(b.semis.length === 3 ? INV_N3 : INV_N4)[k]}`, base: b, inv: k, sym: b.sym, info: b.info })));
 const invIds = (bid, n) => Array.from({ length: n }, (_, k) => bid + "|" + k);
 const SCL = [
@@ -79,7 +79,7 @@ const EX = {
   inversions: {
     he: "היפוכי אקורדים", ic: "🔄", sub: "מצב יסודי / היפוך 1 / היפוך 2", fam: "chord", items: INV, modes: [["block", "יחד"], ["arp", "ארפג'יו"]], noCustom: true,
     presets: [["מז'ור – 3 צורות", invIds("מז'ור", 3)], ["מינור – 3 צורות", invIds("מינור", 3)], ["מוקטן – 3 צורות", invIds("מוקטן", 3)], ["מז'ור ומינור יחד (6 אפשרויות)", [...invIds("מז'ור", 3), ...invIds("מינור", 3)]], ["Major 7 – 4 צורות", invIds("Major 7", 4)], ["Dominant 7 – 4 צורות", invIds("Dominant 7", 4)], ["Minor 7 – 4 צורות", invIds("Minor 7", 4)]],
-    desc: "תשמע אקורד ותבחר באיזה מצב הוא נוגן – לפי הצליל שנמצא בבס (שיעור 9: סקסטאקורד = היפוך ראשון, קוורטסקסטאקורד 6/4 = היפוך שני).", q: "באיזה מצב האקורד?"
+    desc: "תשמע אקורד ותבחר באיזה מצב הוא נוגן – לפי הצליל שנמצא בבס (שיעור 9: סקסטאקורד = היפוך ראשון, קוורטסקסטאקורד 6/4 = היפוך שני; שיעור 14: בספטאקורד – קווינט-סקסטאקורד, טרצ-קוורטאקורד, סקונדאקורד).", q: "באיזה מצב האקורד?"
   },
   scales: {
     he: "סולמות", ic: "🎼", sub: "מז'ור, מינורים, פנטטוני, בלוז", fam: "scale", items: SCL, modes: [["asc", "עולה"], ["desc", "יורד"]],
@@ -95,6 +95,9 @@ const EX = {
 
 /* ---------- ציור: חמשה ופסנתר ---------- */
 const NAT_IDX = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
+/* מקורות בשקפים לכל תרגיל – כפתורים שפותחים את השקף */
+EX.intervals.src = "שיעור 3, שקף 7, 8"; EX.triads.src = "שיעור 4, שקף 5–8"; EX.sevenths.src = "שיעור 14, שקף 8, 9"; EX.inversions.src = "שיעור 9, שקף 9, 10, 11 ו-שיעור 14, שקף 6";
+EX.scales.src = "שיעור 1, שקף 10 ו-שיעור 6, שקף 5 ו-שיעור 11, שקף 7, 8"; EX.modes.src = "שיעור 15, שקף 7, 8, 9";
 function noteMidi(name, oct) { const p = parse(name); return 12 * (oct + 1) + NAT[p.l] + p.a; }
 function noteOct(name, midi) { const p = parse(name); return Math.round((midi - NAT[p.l] - p.a) / 12) - 1; }
 function dpos(name, midi) { const p = parse(name); return noteOct(name, midi) * 7 + NAT_IDX[p.l]; }
@@ -259,7 +262,7 @@ function earIntro(app, arg) {
     chips.innerHTML = ""; E.items.filter(x => arg.custom || ids.includes(x.id)).forEach(x => { const on = ids.includes(x.id); chips.append(h("button", { class: "btn " + (on ? "" : "alt"), style: "padding:8px 14px;font-size:15px", disabled: arg.custom ? null : "disabled", onclick: () => { const i = ids.indexOf(x.id); i >= 0 ? ids.splice(i, 1) : ids.push(x.id); paint(); } }, x.he)); });
   }
   paint();
-  app.append(h("div", { class: "card", style: "text-align:center" }, h("div", { class: "row" }, h("button", { class: "btn alt", onclick: () => go("ear", { stage: "presets", kind: arg.kind }) }, "✕ חזרה")), h("div", { class: "muted", style: "margin-top:14px" }, "משימה"), h("h2", { style: "margin:4px 0" }, arg.label), h("div", { class: "muted" }, E.he), h("p", { style: "margin:20px 0" }, E.desc),
+  app.append(h("div", { class: "card", style: "text-align:center" }, h("div", { class: "row" }, h("button", { class: "btn alt", onclick: () => go("ear", { stage: "presets", kind: arg.kind }) }, "✕ חזרה")), h("div", { class: "muted", style: "margin-top:14px" }, "משימה"), h("h2", { style: "margin:4px 0" }, arg.label), h("div", { class: "muted" }, E.he), h("p", { style: "margin:20px 0 6px" }, E.desc), h("div", { class: "src", style: "margin-bottom:14px" }, srcNode(E.src, "בשקפים: ")),
     h("h3", {}, arg.custom ? "סמן את האפשרויות בתרגיל" : "האפשרויות בתרגיל"), chips, h("h3", { style: "margin-top:20px" }, "כמה שאלות?"), cnt, h("div", { style: "margin-top:24px" }, start)));
 }
 function earRun(app, arg) {
@@ -290,7 +293,7 @@ function earRun(app, arg) {
     host.append(h("div", { class: "row", style: "justify-content:center;margin:6px 0" }, ...E.modes.map(([k, lab]) => h("button", { class: "btn " + (mode === k ? "" : "alt"), style: "padding:10px 20px;font-size:16px", onclick: () => { mode = k; ST.ear.modes[kind] = k; save(ST); paint(result); play(); } }, lab))));
     host.append(h("div", { class: "prompt", style: "text-align:center" }, result ? (result.ok ? "✔ נכון!" : "✘ לא נכון") : E.q));
     if (result) {
-      host.append(h("div", { style: "text-align:center" }, h("div", {}, h("b", {}, result.item.he), result.item.info ? " – " + result.item.info : ""), h("div", { class: "muted" }, "תווים: ", nameLine(q, result.item)), result.ok ? null : h("div", { style: "color:var(--bad)" }, "בחרת: " + result.chosen)));
+      host.append(h("div", { style: "text-align:center" }, h("div", {}, h("b", {}, result.item.he), result.item.info ? " – " + result.item.info : ""), h("div", { class: "muted" }, "תווים: ", nameLine(q, result.item)), h("div", { class: "src", style: "margin-top:4px" }, srcNode(E.src, "ללמוד עוד: ")), result.ok ? null : h("div", { style: "color:var(--bad)" }, "בחרת: " + result.chosen)));
       const cmp = h("div", { class: "row", style: "justify-content:center;margin:10px 0" }, h("button", { class: "btn alt", style: "padding:10px 16px", onclick: () => playNotes(E.fam, q.notes, mode) }, "▶ הנכונה"));
       if (!result.ok && result.chosenNotes) cmp.append(h("button", { class: "btn alt", style: "padding:10px 16px", onclick: () => playNotes(E.fam, result.chosenNotes, mode) }, "▶ מה שבחרת"));
       host.append(cmp);

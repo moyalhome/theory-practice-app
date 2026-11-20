@@ -85,7 +85,7 @@ function closeSlide(fromPop) {
 /* מקבל טקסט כמו "שיעור 15, שקף 4–8 – תיאור" או "שיעור 6, שקף 8, 9" ומחזיר שורת כפתורים שפותחים את השקף */
 function srcNode(text, prefix = "מקור: ") {
   const wrap = h("span", { class: "srcrow" }); if (prefix) wrap.append(prefix);
-  const re = /שיעור\s*(\d+)(?:\s*,?\s*שק(?:פים|ף)\s*([\d–\-,\s]+?))?(?=\s*(?:–\s|$|\||\)))(?:\s*–\s*([^|]*))?/g; let m, last = 0, any = false;
+  const re = /שיעור\s*(\d+)(?:\s*,?\s*שק(?:פים|ף)\s*([\d–\-,\s]+?))?(?=\s*(?:–\s|$|\||\)|ו-?שיעור))(?:\s*–\s*([^|]*))?/g; let m, last = 0, any = false;
   const t = String(text);
   while ((m = re.exec(t))) {
     any = true; if (m.index > last) wrap.append(t.slice(last, m.index));

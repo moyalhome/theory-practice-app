@@ -42,6 +42,8 @@ async function boot() {
     if (typeof ENC === "undefined") { document.getElementById("app").textContent = "חסרים קובצי נתונים."; return; }
     await unlockData();
   }
+  /* מציגים שם אנגלי רק אם הוא מופיע בשקפים עצמם (המצגת היא האמת) */
+  try { const all = CORPUS.map(d => d.t).join("\n").toLowerCase(); TERMS.forEach(t => { if (!t.en) return; const ok = t.en.split(/\s*\/\s*/).some(p => all.includes(p.toLowerCase().replace(/[()]/g, "").trim())); if (!ok) t.en = ""; }); } catch (e) { }
   renderNav(); go("home");
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => { });
 }

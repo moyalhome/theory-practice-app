@@ -26,11 +26,11 @@ const NAT = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 function parse(n) { const m = /^([A-G])(##|bb|#|b)?$/.exec(n); return { l: m[1], a: m[2] === "#" ? 1 : m[2] === "b" ? -1 : m[2] === "##" ? 2 : m[2] === "bb" ? -2 : 0 }; }
 function pc(n) { const p = parse(n); return ((NAT[p.l] + p.a) % 12 + 12) % 12; }
 const accStr = a => a === 0 ? "" : a === 1 ? "#" : a === -1 ? "b" : a === 2 ? "##" : "bb";
-function spell(root, steps, semis) {
+function spell(root, steps, semis, dbl) {
   const p = parse(root), letter = LETTERS[(LETTERS.indexOf(p.l) + steps) % 7];
   const target = (pc(root) + semis) % 12;
   let acc = ((target - NAT[letter]) % 12 + 12) % 12; if (acc > 6) acc -= 12;
-  if (Math.abs(acc) > 1) return null;
+  if (Math.abs(acc) > (dbl ? 2 : 1)) return null;
   return letter + accStr(acc);
 }
 function normNote(t) { t = t.trim().replace(/♯/g, "#").replace(/♭/g, "b"); if (!t) return ""; return t[0].toUpperCase() + t.slice(1).replace(/B(?=$)/, "b").replace(/B/g, "b"); }
@@ -81,6 +81,8 @@ const INTERVALS = [
 ];
 const TYPE_HE = { p: "קונסוננטי (מושלם)", c: "קונסוננטי", d: "דיסוננטי" };
 const tones = s => String(s / 2);
+/* "ספטימה גדולה" → "הספטימה הגדולה" (כמו בשקף 3.13: "מהי הספטימה הגדולה מ-E?") */
+const defIv = he => he.replace(/\s*\(.*\)/, "").split(" ").map(w => "ה" + w).join(" ");
 const halves = n => n === 0 ? "0 חצאי טון" : n === 1 ? "חצי טון אחד" : `${n} חצאי טון`;
 
 const DEG_MAJ = [["I", "טוניקה", "מז'ור"], ["II", "סופרטוניקה", "מינור"], ["III", "מדיאנטה", "מינור"], ["IV", "סובדומיננטה", "מז'ור"], ["V", "דומיננטה", "מז'ור"], ["VI", "סובמדיאנטה", "מינור"], ["VII", "טון מוביל", "מוקטן"]];
@@ -135,7 +137,7 @@ topic("intervals", "מרווחים", "טבלת המרווחים, שמות, טו�
     for (let t = 0; t < 40; t++) {
       const iv = pick(INTERVALS.filter(x => x.semi !== 6 && x.semi !== 0 && x.semi !== 12));
       const target = spell(root, iv.steps, iv.semi); if (!target) continue;
-      return mc("intervals", "intName", `מה המרווח שנוצר כאשר מנגנים ${NL(root)} + ${NL(target)}?`, iv.he, INTERVALS.map(x => x.he), `${NL(root)}→${NL(target)} הם ${iv.steps + 1} שמות תווים (${iv.he.split(" ")[0]}), ${halves(iv.semi)}: ${iv.he}.`, S(3, "7, 8, 13", "מרווח = מספר צעדים בסולם + גודל"));
+      return mc("intervals", "intName", `מה המרווח שנוצר כאשר מנגנים ${L(fmtNote(root) + " + " + fmtNote(target))}?`, iv.he, INTERVALS.map(x => x.he), `${L(fmtNote(root) + " → " + fmtNote(target))} הם ${iv.steps + 1} שמות תווים (${iv.he.split(" ")[0]}), ${halves(iv.semi)}: ${iv.he}.`, S(3, "7, 8, 13", "מרווח = מספר צעדים בסולם + גודל"));
     }
   },
   function intFind() {
@@ -145,7 +147,7 @@ topic("intervals", "מרווחים", "טבלת המרווחים, שמות, טו�
       const target = spell(root, iv.steps, iv.semi); if (!target) continue;
       const wrong = [spell(root, iv.steps, iv.semi + 1), spell(root, iv.steps, iv.semi - 1), spell(root, iv.steps + 1, iv.semi), spell(root, iv.steps - 1 < 0 ? 6 : iv.steps - 1, iv.semi)].filter(Boolean);
       const extra = shuffle(["C", "D", "E", "F", "G", "A", "B", "Db", "Eb", "Gb", "Ab", "Bb"]);
-      return mc("intervals", "intFind", `מהי ה<b>${iv.he}</b> מ-${NL(root)}?`, fmtNote(target), [...wrong, ...extra].map(fmtNote), `${iv.he} = ${halves(iv.semi)} ו-${iv.steps + 1} שמות תווים מ-${NL(root)}: ${NL(target)}.`, S(3, "7, 13"));
+      return mc("intervals", "intFind", `מהי <b>${defIv(iv.he)}</b> מ-${NL(root)}?`, fmtNote(target), [...wrong, ...extra].map(fmtNote), `${iv.he} = ${halves(iv.semi)} ו-${iv.steps + 1} שמות תווים מ-${NL(root)}: ${NL(target)}.`, S(3, "7, 13"));
     }
   },
   function intType() {
@@ -277,9 +279,9 @@ topic("sevenths", "ספטאקורדים", "ארבעה צלילים: בנייה, 
     return mc("sevenths", "sevIVminor", `כשהופכים את הדרגה הרביעית ב${q[k][0]} לספטאקורד, איזה ספטאקורד היא תהיה?`, q[k][1], ["Major 7 (maj7)", "Minor 7 (m7)", "Dominant 7", "Half diminished (ø7)"], k === 0 ? "ב-C מז'ור: Fmaj7." : "ב-Cm: Fm7 (דרגה IV במינור מינורית + ספטימה קטנה).", S(15, 2));
   },
   function sevNotes() {
-    const k = pick(["maj7", "7", "m7", "ø7"]); const roots = ["C", "D", "E", "F", "G", "A", "B", "Bb", "Eb"];
+    const k = pick(["maj7", "7", "m7", "ø7", "dim7"]); const roots = ["C", "D", "E", "F", "G", "A", "B", "Bb", "Eb"];
     for (let t = 0; t < 40; t++) {
-      const r = pick(roots); const steps = [0, 2, 4, 6]; const ns = SEVENTHS[k].semis.map((x, j) => spell(r, steps[j], x)); if (ns.some(n => !n)) continue;
+      const r = pick(roots); const steps = [0, 2, 4, 6]; const ns = SEVENTHS[k].semis.map((x, j) => spell(r, steps[j], x, k === "dim7")); if (ns.some(n => !n) || ns.filter(n => n.length > 2).length > 1) continue;   /* ספטימה מוקטנת כמו בשקף (C: Bbb) – לכל היותר כפול-במול אחד */
       return txt("sevenths", "sevNotes", `אילו תווים מרכיבים את האקורד ${NL(r + k)}?<br><span class="muted">הקלד 4 תווים</span>`, ns, `${SEVENTHS[k].he}: ${SEVENTHS[k].how}. ${NLs(ns)}`, S(14, "8, 9"));
     }
   },
@@ -322,11 +324,18 @@ topic("functional", "קדנצות והרמוניה פונקציונלית", "ת�
   },
   function progression() {
     const r = pick(["C", "G", "D", "A", "F", "Bb", "E"]); const sc = scaleNotes(r, "major");
-    const progs = [[0, 3, 4, 0, "I–IV–V–I"], [0, 5, 3, 4, "I–VI–IV–V"], [0, 4, 5, 3, "I–V–VI–IV"], [3, 4, 0, 0, "IV–V–I"], [1, 4, 0, 0, "II–V–I (2-5-1)"]];
+    /* כל המהלכים כאן מופיעים בשקפים עצמם (שיעורים 9–10); המקור מצוין לצד כל מהלך */
+    const progs = [
+      [[4, 0], "V–I", S(9, 4)], [[3, 4, 0], "IV–V–I", S(9, 7)], [[1, 4, 0], "II–V–I (2-5-1)", S(10, 11)],
+      [[0, 2, 0], "I–III–I", S(10, 4)], [[0, 2, 5, 4, 0], "I–III–VI–V–I", S(10, 4)], [[0, 3, 2, 6, 0], "I–IV–III–VII–I", S(10, 4)],
+      [[0, 5, 3, 4], "I–VI–IV–V", S(10, 7)], [[0, 4, 5, 3], "I–V–VI–IV", S(10, 7)], [[0, 3, 4, 5], "I–IV–V–VI", S(10, 7)],
+      [[4, 3, 2, 1, 0], "V–IV–III–II–I", S(10, 12)], [[0, 4, 1], "I–V–II", S(10, 12)], [[0, 1, 0], "I–II–I", S(10, 12)],
+    ];
     const p = pick(progs);
-    const names = p.slice(0, 4).map(i => triadAt(sc, i).name);
-    const wrong = shuffle(progs.filter(x => x !== p)).map(x => x[4]);
-    return mc("functional", "progression", `במז'ור ${NL(r)}: ${L(names.map(fmtNote).join(" – "))}. איזה מהלך דרגות זה?`, p[4], wrong, `לפי דרגות סולם ${NL(r)} מז'ור: ${L(sc.map((n, k) => fmtNote(triadAt(sc, k).name)).join(" · "))}`, S(10, "4, 7, 12"));
+    const names = p[0].map(i => triadAt(sc, i).name);
+    const same = progs.filter(x => x !== p && x[0].length === p[0].length), other = progs.filter(x => x !== p && x[0].length !== p[0].length);
+    const wrong = [...shuffle(same), ...shuffle(other)].map(x => x[1]);
+    return mc("functional", "progression", `במז'ור ${NL(r)}: ${L(names.map(fmtNote).join(" – "))}. איזה מהלך דרגות זה?`, p[1], wrong, `לפי דרגות סולם ${NL(r)} מז'ור: ${L(sc.map((n, k) => fmtNote(triadAt(sc, k).name)).join(" · "))}`, p[2]);
   },
 ]);
 
