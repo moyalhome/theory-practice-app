@@ -31,7 +31,7 @@ const midiToHz = m => 440 * Math.pow(2, (m - 69) / 12);
 function playNote(m, when, dur, vol = .5) {
   const ctx = unlockAudio(); const t0 = ctx.currentTime + 0.03 + when; const f = midiToHz(m);
   const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + .015); g.gain.exponentialRampToValueAtTime(.0008, t0 + dur); g.connect(master);
-  [[1, "triangle", 1], [2, "sine", .35], [3, "sine", .12]].forEach(([mul, type, a]) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f * mul; const og = ctx.createGain(); og.gain.value = a; o.connect(og); og.connect(g); o.start(t0); o.stop(t0 + dur + .05); liveNodes.push(o); });
+  [[1, "triangle", 1], [2, "sine", .35], [3, "sine", .12]].forEach(([mul, type, a]) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f * mul; const og = ctx.createGain(); og.gain.value = a; o.connect(og); og.connect(g); o.start(t0); o.stop(t0 + dur + .05); liveNodes.push(o); o.onended = () => { const i = liveNodes.indexOf(o); if (i >= 0) liveNodes.splice(i, 1); }; });
 }
 function playSeq(midis, step, dur) { midis.forEach((m, i) => playNote(m, i * step, dur)); }
 function playChord(midis, dur) { midis.forEach(m => playNote(m, 0, dur, midis.length > 2 ? .26 : .34)); }
@@ -133,21 +133,46 @@ let pianoScroll = null;
 function piano(marks, focusMidi) {
   const whites = []; for (let m = PIANO_LO; m <= PIANO_HI; m++) if (WHITE_PC.includes(m % 12)) whites.push(m);
   const W = whites.length * KW;
-  const s = svgEl("svg", { viewBox: `0 0 ${W} ${KH}`, width: W, height: KH, role: "group", "aria-label": "פסנתר – לחץ על קליד כדי לנגן", style: "direction:ltr;display:block;touch-action:manipulation" });
+  /* מגע מרובה: כל אצבע = pointerdown משלה, ולכן אפשר ללחוץ כמה קלידים יחד. touch-action:none מונע מהדפדפן לגלול באמצע נגינה (הגלילה – בחצים/בסרגל מתחת). */
+  const s = svgEl("svg", { viewBox: `0 0 ${W} ${KH}`, width: W, height: KH, role: "group", "aria-label": "פסנתר – לחץ על קליד כדי לנגן. אפשר ללחוץ כמה קלידים יחד", style: "direction:ltr;display:block;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none" });
+  s.addEventListener("contextmenu", e => e.preventDefault());
   const xOf = m => WHITE_PC.includes(m % 12) ? whites.indexOf(m) * KW + KW / 2 : (whites.indexOf(m - 1) + 1) * KW;
-  const rects = {};
-  const flash = m => { const r = rects[m]; if (!r) return; const old = r.getAttribute("data-fill"); r.setAttribute("fill", COL.tap); setTimeout(() => r.setAttribute("fill", old), 330); };
-  const press = m => () => { playNote(m, 0, 1.6, .55); flash(m); };
-  whites.forEach((m, i) => { const r = svgEl("rect", { x: i * KW + 1, y: 2, width: KW - 2, height: KH - 4, rx: 4, fill: "#e6e6ec", "data-fill": "#e6e6ec", stroke: "#8a8a93", style: "cursor:pointer" }); r.addEventListener("click", press(m)); rects[m] = r; s.append(r); });
+  const rects = {}, held = {}, sel = new Set(); let chordMode = false;
+  const paintKey = m => { const r = rects[m]; if (!r) return; const on = Object.values(held).includes(m); r.setAttribute("fill", on ? COL.tap : sel.has(m) ? "#f2b84b" : r.getAttribute("data-fill")); };
+  const press = m => e => {
+    e.preventDefault(); try { e.target.setPointerCapture(e.pointerId); } catch (x) { }
+    if (chordMode) { sel.has(m) ? sel.delete(m) : sel.add(m); paintKey(m); playNote(m, 0, 1.4, .5); refreshBar(); return; }
+    held[e.pointerId] = m; paintKey(m); playNote(m, 0, 2.6, .5);
+  };
+  const release = e => { const m = held[e.pointerId]; if (m === undefined) return; delete held[e.pointerId]; setTimeout(() => paintKey(m), 140); };
+  s.addEventListener("pointerup", release); s.addEventListener("pointercancel", release); s.addEventListener("lostpointercapture", release);
+  whites.forEach((m, i) => { const r = svgEl("rect", { x: i * KW + 1, y: 2, width: KW - 2, height: KH - 4, rx: 4, fill: "#e6e6ec", "data-fill": "#e6e6ec", stroke: "#8a8a93", style: "cursor:pointer" }); r.addEventListener("pointerdown", press(m)); rects[m] = r; s.append(r); });
   whites.forEach(m => { const t = svgEl("text", { x: xOf(m), y: KH - 8, "font-size": 12, fill: "#555", "text-anchor": "middle", style: "pointer-events:none" }); t.textContent = WHITE_NM[m % 12] + (m % 12 === 0 ? (Math.floor(m / 12) - 1) : ""); s.append(t); });
-  for (let m = PIANO_LO; m <= PIANO_HI; m++) if (!WHITE_PC.includes(m % 12)) { const r = svgEl("rect", { x: xOf(m) - KW * .3, y: 2, width: KW * .6, height: (KH - 4) * .6, rx: 3, fill: "#1b1b20", "data-fill": "#1b1b20", style: "cursor:pointer" }); r.addEventListener("click", press(m)); rects[m] = r; s.append(r); }
+  for (let m = PIANO_LO; m <= PIANO_HI; m++) if (!WHITE_PC.includes(m % 12)) { const r = svgEl("rect", { x: xOf(m) - KW * .3, y: 2, width: KW * .6, height: (KH - 4) * .6, rx: 3, fill: "#1b1b20", "data-fill": "#1b1b20", style: "cursor:pointer" }); r.addEventListener("pointerdown", press(m)); rects[m] = r; s.append(r); }
   (marks || []).forEach(nt => { const black = !WHITE_PC.includes(nt.midi % 12); const cx = xOf(nt.midi), cy = black ? 2 + (KH - 4) * .6 - 16 : KH - 40;
     s.append(svgEl("circle", { cx, cy, r: 11, fill: nt.color || COL.ok, style: "pointer-events:none" })); const t = svgEl("text", { x: cx, y: cy + 4, "font-size": 10, fill: "#fff", "text-anchor": "middle", "font-weight": "700", style: "pointer-events:none" }); t.textContent = fmtNote(nt.name).slice(0, 3); s.append(t); });
-  const box = h("div", { style: "overflow-x:auto;direction:ltr;-webkit-overflow-scrolling:touch;border-radius:8px" }, s);
+  const box = h("div", { style: "overflow-x:hidden;direction:ltr;border-radius:8px" }, s);
   const target = focusMidi !== undefined ? focusMidi : 60;
-  setTimeout(() => { box.scrollLeft = pianoScroll !== null ? pianoScroll : Math.max(0, xOf(Math.max(PIANO_LO, Math.min(PIANO_HI, target))) - box.clientWidth / 2); }, 0);
+  const maxScroll = () => Math.max(0, W - box.clientWidth);
+  const slider = h("input", { type: "range", min: 0, max: 1000, value: 0, "aria-label": "גלילה בין האוקטבות", style: "flex:1;min-width:80px;direction:ltr" });
+  const setScroll = x => { box.scrollLeft = Math.max(0, Math.min(maxScroll(), x)); pianoScroll = box.scrollLeft; slider.value = maxScroll() ? Math.round(box.scrollLeft / maxScroll() * 1000) : 0; };
+  slider.addEventListener("input", () => setScroll(slider.value / 1000 * maxScroll()));
   box.addEventListener("scroll", () => { pianoScroll = box.scrollLeft; }, { passive: true });
-  return box;
+  setTimeout(() => setScroll(pianoScroll !== null ? pianoScroll : xOf(Math.max(PIANO_LO, Math.min(PIANO_HI, target))) - box.clientWidth / 2), 0);
+  const oct = KW * 7;
+  const btnStyle = "padding:8px 14px;font-size:16px;min-width:44px";
+  const chordBtn = h("button", { class: "btn alt", style: btnStyle, "aria-pressed": "false", onclick: () => { chordMode = !chordMode; chordBtn.className = "btn " + (chordMode ? "" : "alt"); chordBtn.setAttribute("aria-pressed", chordMode); if (!chordMode) clearSel(); refreshBar(); } }, "🎼 מצב אקורד");
+  const playSel = h("button", { class: "btn", style: btnStyle + ";display:none", onclick: () => { const ms = [...sel].sort((a, b) => a - b); if (ms.length) playChord(ms, 2.4); ms.forEach(m => { const r = rects[m]; if (r) { r.setAttribute("fill", COL.tap); setTimeout(() => paintKey(m), 400); } }); } }, "▶ נגן יחד");
+  const clearBtn = h("button", { class: "btn alt", style: btnStyle + ";display:none", onclick: () => { clearSel(); refreshBar(); } }, "נקה");
+  function clearSel() { const old = [...sel]; sel.clear(); old.forEach(paintKey); }
+  function refreshBar() { const on = chordMode; playSel.style.display = on && sel.size ? "" : "none"; clearBtn.style.display = on && sel.size ? "" : "none"; hint.textContent = on ? (sel.size ? `נבחרו ${sel.size} קלידים – לחץ "נגן יחד"` : "מצב אקורד: סמן כמה קלידים ואז לחץ \"נגן יחד\"") : "אפשר ללחוץ כמה קלידים בו־זמנית עם כמה אצבעות"; }
+  const hint = h("div", { class: "muted", style: "font-size:12px;text-align:center;margin-top:4px" }, "");
+  const bar = h("div", { class: "row", style: "flex-wrap:nowrap;margin-top:6px;direction:ltr" },
+    h("button", { class: "btn alt", style: btnStyle, "aria-label": "אוקטבה שמאלה", onclick: () => setScroll(box.scrollLeft - oct) }, "◀"), slider,
+    h("button", { class: "btn alt", style: btnStyle, "aria-label": "אוקטבה ימינה", onclick: () => setScroll(box.scrollLeft + oct) }, "▶"));
+  const bar2 = h("div", { class: "row", style: "justify-content:center;margin-top:6px" }, chordBtn, playSel, clearBtn);
+  refreshBar();
+  return h("div", {}, box, bar, bar2, hint);
 }
 
 /* ---------- בניית שאלה ---------- */
@@ -202,6 +227,9 @@ function statLine(kind) { const s = ST.stats["ear:" + kind]; return s && s.n ? `
 function earHub(app) {
   app.append(h("div", { class: "card" }, h("h2", {}, "אימון אוזן"), h("p", { class: "muted", style: "margin:4px 0 10px" }, "בחר נושא. אחרי כל תשובה רואים את התווים על החמשה ועל הפסנתר, ואפשר לנגן ולהשוות."),
     h("div", { class: "row" }, h("button", { class: "btn alt", style: "padding:12px 16px", onclick: () => { unlockAudio(); playSeq([60, 64, 67, 72], .35, 1.2); } }, "🔊 בדיקת שמע"), h("span", { class: "muted", style: "font-size:13px" }, "לא שומעים? בטלפון: כבו מצב שקט (המתג בצד) והגבירו ווליום."))));
+  const sv = ST.active.ear;
+  if (sv && EX[sv.kind]) app.append(h("div", { class: "card", style: "border-color:var(--acc)" }, h("h3", {}, "⏸ תרגיל שנשמר באמצע"), h("p", {}, `${EX[sv.kind].he} – ${sv.label} · ${sv.idx} מתוך ${sv.N} שאלות, ${sv.right} נכונות.`),
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { unlockAudio(); go("ear", { stage: "run", resume: true }); } }, "▶ המשך"), h("button", { class: "btn alt", onclick: () => { if (confirm("למחוק את התרגיל השמור? לא ניתן לשחזר.")) { delete ST.active.ear; save(ST); go("ear"); } } }, "🗑 מחק"))));
   const grid = h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px" });
   Object.keys(EX).forEach(kind => { const E = EX[kind];
     grid.append(h("button", { class: "etile", onclick: () => go("ear", { stage: "presets", kind }) }, h("span", { class: "ic" }, E.ic), h("b", {}, E.he), h("small", {}, E.sub), statLine(kind) ? h("small", { style: "color:var(--ok)" }, statLine(kind)) : null)); });
@@ -210,7 +238,7 @@ function earHub(app) {
 }
 function earPiano(app) {
   pianoScroll = null;
-  app.append(h("div", { class: "card" }, h("div", { class: "row" }, h("button", { class: "btn alt", onclick: () => go("ear") }, "✕ חזרה")), h("h2", {}, "פסנתר חופשי"), h("p", { class: "muted" }, "לחץ על קלידים כדי לשמוע. גלול ימינה ושמאלה לאוקטבות אחרות. אפשר להשתמש בו כדי לבדוק אינטרוול או אקורד שמצאת בראש."), piano([], 60)));
+  app.append(h("div", { class: "card" }, h("div", { class: "row" }, h("button", { class: "btn alt", onclick: () => go("ear") }, "✕ חזרה")), h("h2", {}, "פסנתר חופשי"), h("p", { class: "muted" }, "לחץ על קלידים כדי לשמוע – אפשר ללחוץ כמה קלידים יחד עם כמה אצבעות (או \"מצב אקורד\" בעכבר). החצים והסרגל מתחת מזיזים בין האוקטבות. אפשר להשתמש בו כדי לבדוק מרווח או אקורד שמצאת בראש."), piano([], 60)));
 }
 function earPresets(app, arg) {
   const E = EX[arg.kind];
@@ -225,7 +253,8 @@ function earIntro(app, arg) {
   const cnt = h("div", { class: "row", style: "justify-content:center" });
   function paintCnt() { cnt.innerHTML = ""; [5, 10, 20].forEach(n => cnt.append(h("button", { class: "btn " + (ST.ear.n === n ? "" : "alt"), style: "padding:8px 18px", onclick: () => { ST.ear.n = n; save(ST); paintCnt(); } }, String(n)))); }
   paintCnt();
-  const start = h("button", { class: "btn", style: "width:100%;font-size:19px;padding:16px", onclick: () => { unlockAudio(); if (ids.length < 2) return alert("בחר לפחות שתי אפשרויות"); go("ear", { stage: "run", kind: arg.kind, ids: ids.slice(), label: arg.label }); } }, "▶ התחל תרגיל");
+  const start = h("button", { class: "btn", style: "width:100%;font-size:19px;padding:16px", onclick: () => { unlockAudio(); if (ids.length < 2) return alert("בחר לפחות שתי אפשרויות"); const old = ST.active.ear; if (old && !confirm(`יש תרגיל שלא הסתיים (${EX[old.kind].he} – ${old.label}, ${old.idx} מתוך ${old.N}). התחלת תרגיל חדש תמחק אותו.
+להמשיך ולמחוק?`)) return; delete ST.active.ear; save(ST); go("ear", { stage: "run", kind: arg.kind, ids: ids.slice(), label: arg.label }); } }, "▶ התחל תרגיל");
   function paint() {
     chips.innerHTML = ""; E.items.filter(x => arg.custom || ids.includes(x.id)).forEach(x => { const on = ids.includes(x.id); chips.append(h("button", { class: "btn " + (on ? "" : "alt"), style: "padding:8px 14px;font-size:15px", disabled: arg.custom ? null : "disabled", onclick: () => { const i = ids.indexOf(x.id); i >= 0 ? ids.splice(i, 1) : ids.push(x.id); paint(); } }, x.he)); });
   }
@@ -234,11 +263,22 @@ function earIntro(app, arg) {
     h("h3", {}, arg.custom ? "סמן את האפשרויות בתרגיל" : "האפשרויות בתרגיל"), chips, h("h3", { style: "margin-top:20px" }, "כמה שאלות?"), cnt, h("div", { style: "margin-top:24px" }, start)));
 }
 function earRun(app, arg) {
-  const kind = arg.kind, E = EX[kind]; const items = E.items.filter(x => arg.ids.includes(x.id)); const N = ST.ear.n || 10;
+  const sv = arg.resume ? ST.active.ear : null;
+  if (arg.resume && !sv) return earHub(app);
+  if (sv) arg = { stage: "run", kind: sv.kind, ids: sv.ids, label: sv.label };
+  const kind = arg.kind, E = EX[kind]; const items = E.items.filter(x => arg.ids.includes(x.id)); const N = sv ? sv.N : (ST.ear.n || 10);
   let mode = ST.ear.modes[kind]; if (!E.modes.some(m => m[0] === mode)) mode = E.modes[0][0];
-  let idx = 0, right = 0; const per = {}, wrong = new Set(); let q = null, answered = false;
+  let idx = sv ? sv.idx : 0, right = sv ? sv.right : 0; const per = sv ? sv.per : {}, wrong = new Set(sv ? sv.wrong : []); let q = null, answered = false;
+  /* שמירה אוטומטית: מספר השאלות שהושלמו (נענו/דולגו). יציאה באמצע שואלת, וההתקדמות נשארת */
+  const doneCount = () => idx + (answered ? 1 : 0);
+  const saveEar = () => { if (doneCount() > 0) { ST.active.ear = { kind, ids: arg.ids, label: arg.label, N, idx: doneCount(), right, per, wrong: [...wrong], t: Date.now() }; save(ST); } };
+  FLUSH_ACTIVE = saveEar;
+  LEAVE_GUARD = () => doneCount() === 0 || confirm(`התרגיל עדיין פתוח (${doneCount()} מתוך ${N} שאלות).
+אפשר לצאת – ההתקדמות נשמרת ותוכל להמשיך מכרטיס 'אימון אוזן'.
+
+לצאת עכשיו?`);
   const bar = h("i", { style: "width:0%" }), host = h("div");
-  app.append(h("div", { class: "row", style: "flex-wrap:nowrap" }, h("button", { class: "btn alt", style: "padding:8px 14px", "aria-label": "יציאה", onclick: () => { stopAudio(); go("ear", { stage: "presets", kind }); } }, "✕"), h("div", { class: "bar", style: "flex:1;height:14px" }, bar), h("span", { class: "muted", id: "earcnt" }, "")), host);
+  app.append(h("div", { class: "row", style: "flex-wrap:nowrap" }, h("button", { class: "btn alt", style: "padding:8px 14px", "aria-label": "יציאה", onclick: () => { go("ear", { stage: "presets", kind }); } }, "✕"), h("div", { class: "bar", style: "flex:1;height:14px" }, bar), h("span", { class: "muted", id: "earcnt" }, "")), h("div", { class: "muted", style: "font-size:12px;text-align:center" }, "💾 ההתקדמות נשמרת אוטומטית"), host);
   function setBar() { bar.style.width = (100 * idx / N) + "%"; const c = document.getElementById("earcnt"); if (c) c.textContent = `${Math.min(idx + 1, N)}/${N}`; }
   function next() { if (idx >= N) return done(); q = makeEarQ(kind, pick(items)); if (!q) return next(); answered = false; pianoScroll = null; setBar(); paint(); play(); }
   function play() { playNotes(E.fam, q.notes, mode); }
@@ -262,12 +302,12 @@ function earRun(app, arg) {
     });
     host.append(grid);
     host.append(result ? h("button", { class: "btn nextbtn", style: "width:100%;font-size:19px;padding:16px", onclick: () => { idx++; next(); } }, idx + 1 >= N ? "סיום" : "הבא ←")
-      : h("div", { class: "row", style: "justify-content:space-between" }, h("button", { class: "btn alt", style: "flex:1;padding:16px;font-size:17px", onclick: play }, "🔁 שוב"), h("button", { class: "btn alt", style: "flex:1;padding:16px;font-size:17px", onclick: () => { idx++; next(); } }, "דלג")));
+      : h("div", { class: "row", style: "justify-content:space-between" }, h("button", { class: "btn alt", style: "flex:1;padding:16px;font-size:17px", onclick: play }, "🔁 שוב"), h("button", { class: "btn alt", style: "flex:1;padding:16px;font-size:17px", onclick: () => { idx++; saveEar(); next(); } }, "דלג")));
   }
   function answer(it) {
     if (answered) return; answered = true; const ok = it.id === q.item.id; if (ok) right++; else wrong.add(q.item.id);
     const p = per[q.item.he] = per[q.item.he] || { n: 0, r: 0 }; p.n++; if (ok) p.r++;
-    const s = ST.stats["ear:" + kind] = ST.stats["ear:" + kind] || { n: 0, r: 0 }; s.n++; if (ok) s.r++; save(ST);
+    const s = ST.stats["ear:" + kind] = ST.stats["ear:" + kind] || { n: 0, r: 0 }; s.n++; if (ok) s.r++; save(ST); saveEar();
     let notes = q.notes.map(n => ({ ...n, color: COL.ok })); let chosenNotes = null;
     if (!ok) chosenNotes = noteSet(E.fam, it, q.rootName, q.rootMidi);
     if (E.fam === "ivl") {
@@ -282,6 +322,7 @@ function earRun(app, arg) {
   }
   function orderOf(a) { if (!q._order) q._order = shuffle(a.map(x => x.id)); return q._order.map(id => a.find(x => x.id === id)); }
   function done() {
+    LEAVE_GUARD = null; FLUSH_ACTIVE = null; delete ST.active.ear; save(ST);
     stopAudio(); host.innerHTML = ""; setBar(); bar.style.width = "100%";
     const wr = [...wrong]; const pct = Math.round(100 * right / N);
     host.append(h("div", { class: "card", style: "text-align:center" }, h("h2", {}, `${right} / ${N}`), h("div", { class: "muted" }, pct + "%"), h("p", {}, right >= N * .9 ? "מעולה! 🎉" : right >= N * .7 ? "יפה מאוד – עוד קצת תרגול." : "המשך לתרגל – זה מתקבע."),

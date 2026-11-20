@@ -3,10 +3,21 @@
    לא מודל שפה: מחפש אך ורק בתמלול השקפים ובמילון, ומחשב סולמות/אקורדים/מרווחים לפי הכללים שבקורס. */
 const HE_STOP = new Set("את של על מה מהו מהי מהם מהן הוא היא זה זו אם כי גם או אל עם לא כל יש הם הן אני איך למה האם תסביר הסבר ספר לי בבקשה אפשר רוצה לדעת איזה איזו אילו כמה מתי איפה מי בין מן אבל רק כך אז עוד כמו לפי יהיה יהיו היה בו בה בהם הזה הזאת אלה שלי שלך אותו אותה ממש בעצם בכלל תן תני".split(" "));
 function nrm(s) { return s.replace(/[֑-ׇ]/g, "").replace(/מג['׳]ור/g, "מזור").replace(/[׳'"״`´’‘“”]/g, "").toLowerCase(); }
+/* גזע לפי אוצר המילים של הקורס: מסירים תחילית/סיומת רק אם המילה שנשארת קיימת בחומר ("האקורד"→"אקורד", "למלודי"→"מלודי", אבל "מלודי" נשאר "מלודי") */
+let VOCAB = null;
+function rawToks(s) { return nrm(s).split(/[^\p{L}\p{N}#♭♯]+/u).filter(Boolean); }
+function ensureVocab() {
+  if (VOCAB) return; VOCAB = {}; const add = t => rawToks(t).forEach(w => VOCAB[w] = (VOCAB[w] || 0) + 1);
+  CORPUS.forEach(d => add(d.t)); TERMS.forEach(t => { add(t.term); add(t.en || ""); t.quotes.forEach(q => add(q.q)); });
+}
 function stem(w) {
-  if (!/[א-ת]/.test(w)) return w; let x = w;
-  for (let i = 0; i < 2; i++) if (x.length > 3 && /^[והבכלמש]/.test(x)) x = x.slice(1);
-  if (x.length > 4 && /(ים|ות|ית)$/.test(x)) x = x.slice(0, -2);
+  if (!/[א-ת]/.test(w)) return w; ensureVocab(); let x = w;
+  for (let i = 0; i < 3; i++) {
+    const r = x.slice(1), sfx = x.slice(0, -2);
+    if (x.length > 4 && /^[והבכלמש]/.test(x) && r.length >= 4 && VOCAB[r]) x = r;
+    else if (x.length > 4 && /(ים|ות)$/.test(x) && sfx.length >= 3 && VOCAB[sfx]) x = sfx;
+    else break;
+  }
   return x;
 }
 function toks(s) { return nrm(s).split(/[^\p{L}\p{N}#♭♯]+/u).filter(w => w && !HE_STOP.has(w)).map(stem).filter(w => w.length > 1 || /\d/.test(w)); }
@@ -96,6 +107,13 @@ function ansInterval(q, notes) {
   }
   return null;
 }
+const IV_NAME_RE = /(?:^|[^א-ת])[הבלמוכש]{0,2}(סקונדה|טרצה|קוורטה|קווינטה|סקסטה|ספטימה|אוקטבה|טריטון|פרימה|יוניסון)/;
+function ansIvSize(q) {
+  if (!/כמה\s+(?:טונים|חצאי?\s*טון|חצי\s*טון|טון|צעדים)/.test(q)) return null;
+  const m = IV_NAME_RE.exec(q); if (!m) return null; const name = m[1] === "יוניסון" ? "פרימה" : m[1]; const qual = /(קטנה|גדולה)/.exec(q);
+  const cands = INTERVALS.filter(i => i.he.startsWith(name) && (!qual || i.he.endsWith(qual[1]))); if (!cands.length) return null;
+  return { html: cands.map(i => `<b>${i.he}</b> (${i.en}): ${tones(i.semi)} טונים = ${halves(i.semi)} · ${i.steps + 1} שמות תווים`).join("<br>"), src: [[3, 7]] };
+}
 function ansScaleChords(q, notes) {
   if (!/אקורדי?ם?\s*(ב|של)?סולם|דרגות\s*(ב|של)?סולם|ספטאקורדים\s*(ב|של)?סולם|אקורדים\s*ב/.test(nrm(q)) && !/דרגות/.test(q)) return null;
   if (!notes.length) return null; const root = notes[0];
@@ -134,21 +152,93 @@ function ansSlideRef(q) {
   const sl = CORPUS.filter(x => x.l === l); return { html: `<b>שיעור ${l} – ${LESSON_TITLES[l]}</b> (${sl.length} שקפים). לדוגמה: ${sl.slice(1, 5).map(x => `שקף ${x.s}: ${x.t.split("\n")[0].slice(0, 40)}`).join(" · ")}<br><span class="muted">כתוב "שיעור ${l} שקף N" כדי לראות שקף מסוים.</span>`, src: [] };
 }
 
+/* ---- מאגר ידע תמציתי: תשובה קצרה וממוקדת ----
+   עיקרון: מציגים רק את מה ששאלת – הגדרה אחת (ציטוט מהשקף) + מראה מקום. כל השאר מקופל תחת "עוד מהשקפים". */
+let KB = null;
+const aliasToks = name => [...new Set(toks(name.replace(/[()\/|]/g, " ")))];
+const IV_GROUPS = ["פרימה", "סקונדה", "טרצה", "קוורטה", "קווינטה", "סקסטה", "ספטימה"];
+function buildKB() {
+  KB = [];
+  TERMS.forEach(t => {
+    const names = []; [t.term, ...(t.en ? t.en.split(/\s*\/\s*/) : [])].forEach(r => r.split(/\s*[\/|]\s*/).forEach(p => { const base = p.replace(/\s*\(.*?\)\s*/g, " ").trim(); if (base) { names.push(base); const m2 = /^סולם\s+(.+)$/.exec(base); if (m2) names.push(m2[1]); } }));
+    KB.push({ kind: "term", title: t.term, en: t.en, aliases: names.map(aliasToks).filter(a => a.length), quotes: t.quotes });
+  });
+  IV_GROUPS.forEach(g => {
+    const vs = INTERVALS.filter(i => i.he.startsWith(g) || (g === "פרימה" && i.he.includes("יוניסון"))); if (!vs.length) return;
+    const ex = i => `${NL("C")}–${NL(spell("C", i.steps, i.semi))}`;
+    const lines = vs.map(i => `${i.he} (${i.en}): ${tones(i.semi)} טונים (${ex(i)}), ${TYPE_HE[i.type]}`);
+    const steps = vs[0].steps + 1;
+    const intro = g === "פרימה" ? "מרווח של 0 טונים – אותו תו פעמיים (יוניסון)." : `מרווח של ${steps} צעדים בין שמות תווים (למשל מ-C עד ${spell("C", vs[0].steps, vs[0].semi).replace(/[#b]+$/, "")}).`;
+    KB.push({ kind: "interval", title: g === "פרימה" ? "פרימה (יוניסון)" : g, en: vs[0].en.replace(/^(Minor|Major|Perfect)\s*/, ""), aliases: g === "פרימה" ? [["פרימה"], ["יוניסון"]] : [aliasToks(g)], html: `${intro}<br>${lines.join("<br>")}`, srcs: [[3, 8], [3, 7]] });
+  });
+}
+const DEF_RE = /^\s*(?:מה\s+(?:זה|זאת|הוא|היא|הם|הן|הפירוש\s+של|ההגדרה\s+של|הכוונה\s+ב)|מהו|מהי|מהם|מהן|הסבר|תסביר|תסבירי|פירוש|הגדרה|הגדר|ספר\s+לי\s+על|what\s+is)(?![א-ת])/i;
+const CMP_RE = /(?:ההבדל|הבדל|שונה|שונים|השוואה|לעומת|\bvs\.?\b)/i;
+const USE_RE = /(?:מתי|איפה|לשם\s+מה|למה|באיזה)\s*.*(?:משתמשים|נשתמש|משמש|שימוש|מופיע|מופיעה|נשמע|נשמעת)|(?:שימוש|שימושים)\s+(?:של|ב)/;
+function kbMatches(q) {
+  if (!KB) buildKB(); const qt = new Set(toks(q)); const out = [];
+  KB.forEach(e => { let best = 0; e.aliases.forEach(a => { if (a.every(w => qt.has(w))) best = Math.max(best, a.length * 10 + a.join("").length / 100); }); if (best) out.push({ e, sc: best }); });
+  out.sort((a, b) => b.sc - a.sc);
+  const res = []; const used = new Set();   // לא להציג ערך שכל המילים שלו כבר נכללו בערך ארוך יותר ("מינור הרמוני" מול "מינור")
+  out.forEach(o => { const al = o.e.aliases.flat(); if (res.length && al.every(w => used.has(w)) && o.sc < res[0].sc) return; res.push(o); al.forEach(w => used.add(w)); });
+  return res.map(o => o.e);
+}
+function briefOf(e, q) {
+  if (e.kind === "interval") return { kind: "brief", title: e.title, en: e.en, html: e.html, srcs: e.srcs.map(([l, s]) => ({ l, s })), more: [] };
+  const wantUse = USE_RE.test(q); const m = MODES.find(x => e.title === x.he || e.title.startsWith(x.he));
+  if (wantUse && m && m.use) return { kind: "brief", title: e.title, en: e.en, html: `${m.he}: ${m.d}. <b>שימוש:</b> ${m.use}.`, srcs: [{ l: 15, s: 9 }], more: e.quotes.map(x => ({ l: x.l, s: x.s, q: x.q })) };
+  const [q0, ...rest] = e.quotes; return { kind: "brief", title: e.title, en: e.en, text: q0.q, srcs: [{ l: q0.l, s: q0.s }], more: rest.map(x => ({ l: x.l, s: x.s, q: x.q })) };
+}
+/* חיפוש ברמת שורה (לא שקף שלם): מחזיר את השורות שמכסות את מילות השאלה, הטובה ביותר ראשונה */
+let LINES = null, LINE_DF = null;
+function buildLines() {
+  LINES = []; LINE_DF = {};
+  CORPUS.forEach(d => d.t.split("\n").forEach(ln => { ln = ln.trim(); if (!ln || ln.startsWith("[תמונה") || ln.length < 6) return; const tk = [...new Set(toks(ln))]; if (!tk.length) return; LINES.push({ l: d.l, s: d.s, t: ln, tk: new Set(tk), len: tk.length }); tk.forEach(w => LINE_DF[w] = (LINE_DF[w] || 0) + 1); }));
+}
+function lineSearch(q, k = 4) {
+  if (!LINES) buildLines(); const qt = [...new Set(toks(q))]; if (!qt.length) return [];
+  const N = LINES.length, idfOf = w => Math.log(1 + N / (LINE_DF[w] || 1)); const tot = qt.reduce((a, w) => a + idfOf(w), 0) || 1;
+  const res = LINES.filter(x => !/\?\s*$/.test(x.t)).map(x => { let hit = 0, n = 0; qt.forEach(w => { if (x.tk.has(w)) { hit += idfOf(w); n++; } }); return { x, cov: hit / tot, n, sc: hit / tot - Math.min(x.len, 40) / 400 }; }).filter(r => r.n > 0 && r.cov >= (qt.length === 1 ? 1 : 0.6)).sort((a, b) => b.sc - a.sc);
+  const seen = new Set(), out = []; res.forEach(r => { const key = r.x.t; if (seen.has(key) || out.length >= k) return; seen.add(key); out.push({ l: r.x.l, s: r.x.s, q: r.x.t, cov: r.cov }); });
+  return out;
+}
+
+/* שאלות "איך בונים אקורד/סולם X" בלי תו: מדגימים על C לפי כללי הקורס */
+const HOW_RE = /(?:^|\s)(?:איך|כיצד)\s|בונים|בניית|נוסחה|נוסחת|מרכיבים|מורכב/;
+function chordSuffixFromWords(t) {
+  if (/חצי\s*מוקטן|half/i.test(t)) return "ø7";
+  if (/מוקטן\s*7|dim\s*7|ספטימה\s*מוקטנת/i.test(t)) return "dim7";
+  if (/דומיננט|dominant/i.test(t)) return "7";
+  if (/(?:מינור|מינורי)\s*7|minor\s*7/i.test(t)) return "m7";
+  if (/מ[זג]['׳]?ור\s*7|major\s*7|maj7/i.test(t)) return "maj7";
+  if (/סאס\s*2|sus\s*2/i.test(t)) return "sus2"; if (/סאס\s*4|sus\s*4/i.test(t)) return "sus4";
+  if (/כוח|power/i.test(t)) return "5"; if (/מוגדל/.test(t)) return "aug"; if (/מוקטן/.test(t)) return "dim"; if (/מינור/.test(t)) return "m"; if (/מ[זג]['׳]?ור/.test(t)) return "";
+  return null;
+}
+function demoCalc(q) {
+  const lead = '<span class="muted">לדוגמה על C:</span> ';
+  if (/אקורד|ספטאקורד|משולש/.test(q)) { const sfx = chordSuffixFromWords(q); if (sfx !== null) { const a = ansChord("אקורד C" + sfx); if (a) return { parts: [{ kind: "calc", html: lead + a.html }], sources: (a.src || []).map(([l, s]) => ({ l, s })) }; } }
+  if (/סולם|פנטטוני|מודוס|דורי|פריגי|לידי|מיקסולידי|אאולי|לוקריין|איוניין|הרמוני|מלודי|בלוז/.test(q)) { const a = ansScale(q, ["C"]); if (a) return { parts: [{ kind: "calc", html: lead + a.html }], sources: (a.src || []).map(([l, s]) => ({ l, s })) }; }
+  return null;
+}
+
 /* ---- המוח של הצ'אט ---- */
 function chatAnswer(raw) {
   const q = solfegeToLatin(raw.trim()); const notes = findNotes(q);
   const scaleWords = /סולם|פנטטוני|הרמוני|מלודי|דורי|פריגי|לידי|מיקסולידי|אאולי|לוקריין|איוניין|בלוז\s*סקייל|blues\s*scale/i.test(q) && !/אקורד/.test(q);
-  const calc = ansSlideRef(q) || ansInterval(q, notes) || ansScaleChords(q, notes) || (scaleWords ? (ansScale(q, notes) || ansChord(q)) : (ansChord(q) || ansScale(q, notes)));
-  const parts = [];
-  if (calc) {
-    parts.push({ kind: "calc", html: calc.html }); const srcs = (calc.src || []).map(([l, s]) => ({ l, s }));
-    return { parts, sources: srcs, open: calc.open };
-  }
-  const th = termHits(q); th.forEach(t => parts.push({ kind: "def", t }));
-  const res = searchSlides(q, 3).filter(r => r.sc > 0.6);
-  const sources = []; res.forEach(r => { parts.push({ kind: "hit", l: r.d.l, s: r.d.s, text: snippet(r.d.t, r.qt) }); sources.push({ l: r.d.l, s: r.d.s }); });
-  if (!parts.length) parts.push({ kind: "none" });
-  return { parts, sources };
+  const calc = ansSlideRef(q) || ansIvSize(q) || ansInterval(q, notes) || ansScaleChords(q, notes) || (scaleWords ? (ansScale(q, notes) || ansChord(q)) : (ansChord(q) || ansScale(q, notes)));
+  if (calc) { const srcs = (calc.src || []).map(([l, s]) => ({ l, s })); return { parts: [{ kind: "calc", html: calc.html }], sources: srcs, open: calc.open }; }
+  if (!notes.length && HOW_RE.test(q) && !DEF_RE.test(q)) { const demo = demoCalc(q); if (demo) return demo; }
+  const qt = toks(q); const ms = kbMatches(q); const isDef = DEF_RE.test(q) || (qt.length <= 2 && ms.length > 0);
+  // השוואה: שני מושגים או יותר → שורה קצרה לכל אחד
+  if (CMP_RE.test(q) && ms.length >= 2) return { parts: ms.slice(0, 3).map(e => briefOf(e, q)), sources: [], compare: true };
+  const ls = lineSearch(q, 4);
+  // שאלה שאינה "מה זה X": אם יש שורה בשקפים שמכסה כמעט את כל מילות השאלה – היא התשובה
+  if (!isDef && qt.length >= 2 && ls.length && ls[0].cov >= 0.75) return { parts: [{ kind: "line", text: ls[0].q, l: ls[0].l, s: ls[0].s, more: ls.slice(1).map(x => ({ l: x.l, s: x.s, q: x.q })) }], sources: [] };
+  if (ms.length && (isDef || USE_RE.test(q) || qt.length <= 4)) return { parts: [briefOf(ms[0], q)], sources: [] };
+  // לא מצאנו מושג: שורת התשובה הכי קרובה מתוך השקפים (לא כל השקף)
+  if (ls.length) return { parts: [{ kind: "line", text: ls[0].q, l: ls[0].l, s: ls[0].s, more: ls.slice(1).map(x => ({ l: x.l, s: x.s, q: x.q })) }], sources: [] };
+  return { parts: [{ kind: "none" }], sources: [] };
 }
 
 /* ---- ממשק ---- */
@@ -156,18 +246,35 @@ function slideBlock(l, s) {
   const d = CORPUS.find(x => x.l === l && x.s === s); if (!d) return h("div", {}, "השקף לא נמצא.");
   return h("div", { class: "fb good", style: "white-space:pre-wrap" }, h("b", {}, `שיעור ${l} – ${LESSON_TITLES[l]}, שקף ${s}`), h("br"), d.t);
 }
+const slideRef = (l, s) => h("button", { class: "pill", style: "cursor:pointer;margin-inline-start:4px", onclick: () => { if (typeof openSlide === "function") openSlide(l, s); } }, `שיעור ${l}, שקף ${s}`);
+function moreBox(items, label) {
+  const more = h("div", { style: "display:none;margin-top:6px" }, ...items.map(x => h("div", { style: "margin:4px 0" }, `"${x.q}" `, slideRef(x.l, x.s))));
+  const btn = h("button", { class: "pill", style: "cursor:pointer;margin-top:6px", onclick: () => { const open = more.style.display === "none"; more.style.display = open ? "" : "none"; btn.textContent = open ? "הסתר" : `${label} (${items.length})`; } }, `${label} (${items.length})`);
+  return h("div", {}, btn, more);
+}
+function renderBrief(p) {
+  const wrap = h("div", { style: "margin:4px 0" });
+  wrap.append(h("div", {}, h("b", {}, p.title), p.en ? h("span", { class: "muted ltr" }, " " + p.en) : null));
+  wrap.append(p.html ? h("div", { html: p.html, style: "margin-top:2px" }) : h("div", { style: "margin-top:2px" }, `"${p.text}"`));
+  wrap.append(h("div", { class: "row", style: "margin-top:4px" }, h("span", { class: "src" }, "מקור:"), ...p.srcs.map(x => slideRef(x.l, x.s))));
+  if (p.more && p.more.length) wrap.append(moreBox(p.more, "עוד מהשקפים"));
+  return wrap;
+}
 function renderAnswer(box, ans) {
   ans.parts.forEach(p => {
     if (p.kind === "calc") box.append(h("div", { html: p.html }));
-    else if (p.kind === "def") box.append(h("div", { class: "fb good", style: "margin:6px 0" }, h("b", {}, p.t.term), p.t.en ? h("span", { class: "muted ltr" }, " " + p.t.en) : null, ...p.t.quotes.map(x => h("div", {}, `"${x.q}" `, h("span", { class: "src" }, `(שיעור ${x.l}, שקף ${x.s})`)))));
-    else if (p.kind === "hit") box.append(h("div", { style: "margin:6px 0" }, h("div", { class: "src" }, `שיעור ${p.l} – ${LESSON_TITLES[p.l]}, שקף ${p.s}`), h("div", { style: "white-space:pre-wrap" }, p.text)));
+    else if (p.kind === "brief") box.append(ans.compare ? h("div", { class: "fb good", style: "margin:6px 0" }, renderBrief(p)) : renderBrief(p));
+    else if (p.kind === "line") {
+      box.append(h("div", { style: "margin:4px 0" }, h("div", {}, `"${p.text}"`), h("div", { class: "row", style: "margin-top:4px" }, h("span", { class: "src" }, "מקור:"), slideRef(p.l, p.s))));
+      if (p.more && p.more.length) box.append(moreBox(p.more, "עוד תוצאות קרובות"));
+    }
     else box.append(h("div", {}, "לא מצאתי את זה בחומר הקורס. נסה לנסח עם המושגים של השקפים (למשל: קדנצה, דרגה, טריטון, מודוס), או שאל על סולם/אקורד/מרווח מסוים (למשל \"סולם E דורי\")."));
   });
   const uniq = []; (ans.sources || []).forEach(s => { if (!uniq.some(u => u.l === s.l && u.s === s.s)) uniq.push(s); });
   if (uniq.length) {
     const holder = h("div");
-    box.append(h("div", { class: "row", style: "margin-top:8px" }, h("span", { class: "src" }, "מקורות:"), ...uniq.map(s => h("button", { class: "pill", style: "cursor:pointer", onclick: () => { holder.innerHTML = ""; holder.append(slideBlock(s.l, s.s)); } }, `שיעור ${s.l}, שקף ${s.s}`))), holder);
-    if (ans.open) { holder.append(slideBlock(uniq[0].l, uniq[0].s)); }
+    box.append(h("div", { class: "row", style: "margin-top:8px" }, h("span", { class: "src" }, "מקורות:"), ...uniq.map(s => slideRef(s.l, s.s))), holder);
+    if (ans.open) { if (typeof openSlide === "function") openSlide(uniq[0].l, uniq[0].s); else holder.append(slideBlock(uniq[0].l, uniq[0].s)); }
   }
 }
 function chat(app) {

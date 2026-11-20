@@ -494,7 +494,11 @@ function genQuestion(topicId, genIndex) {
 const KEY = "theoryApp.v2";
 function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
 function save(st) { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { } }
-let ST = load(); ST.stats = ST.stats || {}; ST.srs = ST.srs || {}; ST.exams = ST.exams || []; ST.ear = ST.ear || {};
+let ST = load(); ST.stats = ST.stats || {}; ST.srs = ST.srs || {}; ST.exams = ST.exams || []; ST.ear = ST.ear || {}; ST.active = ST.active || {};
+/* שמירה אוטומטית של מבחן/תרגיל באמצע: LEAVE_GUARD שואל לפני יציאה, FLUSH_ACTIVE שומר מצב עדכני (גם כשהאפליקציה נסגרת) */
+let LEAVE_GUARD = null, FLUSH_ACTIVE = null;
+document.addEventListener("visibilitychange", () => { if (document.hidden && FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } });
+window.addEventListener("pagehide", () => { if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } });
 function record(q, ok) {
   const k = q.topic + ":" + q.gen; const s = ST.stats[k] = ST.stats[k] || { n: 0, r: 0 };
   s.n++; if (ok) s.r++; save(ST);
@@ -508,7 +512,7 @@ function renderNav() {
   const nav = $("#nav"); nav.innerHTML = "";
   NAV.forEach(([id, t]) => nav.append(h("button", { class: view === id ? "on" : "", onclick: () => go(id) }, t)));
 }
-function go(v, arg) { stopAudio(); if (EXAM_TIMER) { clearInterval(EXAM_TIMER); EXAM_TIMER = null; } view = v; renderNav(); const app = $("#app"); app.innerHTML = ""; ({ home, chat, practice, ear, flash, exam, ref })[v](app, arg); window.scrollTo(0, 0); }
+function go(v, arg) { if (LEAVE_GUARD) { if (!LEAVE_GUARD(v, arg)) return; if (FLUSH_ACTIVE) { try { FLUSH_ACTIVE(); } catch (e) { } } LEAVE_GUARD = null; FLUSH_ACTIVE = null; } stopAudio(); if (EXAM_TIMER) { clearInterval(EXAM_TIMER); EXAM_TIMER = null; } view = v; renderNav(); const app = $("#app"); app.innerHTML = ""; ({ home, chat, practice, ear, flash, exam, ref })[v](app, arg); window.scrollTo(0, 0); }
 
 /* ---- בית ---- */
 function home(app) {
@@ -568,7 +572,7 @@ function checkText(q, val) { const user = normList(val || ""); return user.lengt
 /* ---- תרגול נושאים ---- */
 function practice(app, arg) {
   if (!arg || (!arg.topic && !arg.smart)) {
-    app.append(h("div", { class: "card" }, h("h2", {}, "בחר נושא"), h("div", { class: "grid" },
+    app.append(h("div", { class: "card" }, h("h2", {}, "בחר נושא"), h("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "💾 כל תשובה נשמרת אוטומטית בסטטיסטיקה – אפשר לצאת בכל רגע."), h("div", { class: "grid" },
       h("button", { class: "tile", onclick: () => go("practice", { smart: true }) }, "🎯 תרגול חכם", h("small", {}, "מתמקד בנקודות החלשות שלך")),
       h("button", { class: "tile", onclick: () => go("practice", { topic: "all" }) }, "🔀 מיקס מכל הנושאים", h("small", {}, "כמו במבחן, עם משוב מיידי")),
       ...TOPIC_ORDER.map(id => { const s = topicStats(id); return h("button", { class: "tile", onclick: () => go("practice", { topic: id }) }, TOPICS[id].he, h("small", {}, TOPICS[id].desc), h("small", {}, s.n ? `דיוק ${Math.round(100 * s.r / s.n)}% · ${s.n} שאלות` : "טרם תורגל")); }))));
@@ -587,34 +591,50 @@ function practice(app, arg) {
 }
 
 /* ---- מבחן סימולציה ---- */
-function exam(app, arg) {
-  if (!arg) {
-    app.append(h("div", { class: "card" }, h("h2", {}, "מבחן סימולציה"), h("p", {}, "שאלות מכל הנושאים, בלי משוב עד הסוף. בסוף תקבל ציון, פירוט לפי נושא ותיקון מלא עם מראי מקום."),
-      h("div", { class: "row" }, ...[[20, 25], [30, 40], [45, 60]].map(([n, m]) => h("button", { class: "btn", onclick: () => go("exam", { n, minutes: m }) }, `${n} שאלות · ${m} דק'`))),
+function examMenu(app) {
+  const sv = ST.active.exam;
+  const start = (n, m) => () => { if (sv && !confirm(`יש מבחן שלא הסתיים (שאלה ${sv.cur + 1} מתוך ${sv.qs.length}). התחלת מבחן חדש תמחק אותו.\nלהמשיך ולמחוק?`)) return; delete ST.active.exam; save(ST); go("exam", { n, minutes: m }); };
+  const left = sv ? Math.ceil(sv.left / 60000) : 0;
+  app.append(
+    sv ? h("div", { class: "card", style: "border-color:var(--acc)" }, h("h3", {}, "⏸ מבחן שנשמר באמצע"), h("p", {}, `שאלה ${sv.cur + 1} מתוך ${sv.qs.length} · נשארו כ-${left} דקות (השעון עצור עד שתמשיך). ענית על ${sv.answers.filter(Boolean).length} שאלות.`),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => go("exam", { resume: true }) }, "▶ המשך מבחן"), h("button", { class: "btn alt", onclick: () => { if (confirm("למחוק את המבחן השמור? לא ניתן לשחזר.")) { delete ST.active.exam; save(ST); go("exam"); } } }, "🗑 מחק"))) : null,
+    h("div", { class: "card" }, h("h2", {}, "מבחן סימולציה"), h("p", {}, "שאלות מכל הנושאים, בלי משוב עד הסוף. בסוף תקבל ציון, פירוט לפי נושא ותיקון מלא עם מראי מקום."), h("p", { class: "muted", style: "font-size:13px" }, "💾 ההתקדמות נשמרת אוטומטית – אפשר לצאת ולחזור. לפני יציאה באמצע תקבל אזהרה."),
+      h("div", { class: "row" }, ...[[20, 25], [30, 40], [45, 60]].map(([n, m]) => h("button", { class: "btn" + (sv ? " alt" : ""), onclick: start(n, m) }, `${n} שאלות · ${m} דק'`))),
       ST.exams.length ? h("div", {}, h("h3", {}, "ניסיונות קודמים"), h("table", {}, h("tr", {}, h("th", {}, "תאריך"), h("th", {}, "ציון"), h("th", {}, "שאלות")), ...ST.exams.slice(-8).reverse().map(e => h("tr", {}, h("td", {}, new Date(e.t).toLocaleDateString("he-IL")), h("td", {}, e.pct + "%"), h("td", {}, e.n))))) : null));
-    return;
+}
+function exam(app, arg) {
+  if (!arg || !(arg.n || arg.resume)) return examMenu(app);
+  let qs, answers, cur, minutes, endAt, timerId;
+  if (arg.resume && ST.active.exam) { const sv = ST.active.exam; qs = sv.qs; answers = sv.answers; cur = sv.cur; minutes = sv.minutes; endAt = Date.now() + sv.left; }
+  else {
+    qs = []; const per = TOPIC_ORDER.filter(t => t !== "concepts").concat(["concepts"]);
+    for (let i = 0; i < arg.n; i++) { const q = genQuestion(per[i % per.length]); if (q) qs.push(q); }
+    answers = new Array(qs.length).fill(null); cur = 0; minutes = arg.minutes; endAt = Date.now() + minutes * 60000;
   }
-  const qs = []; const per = TOPIC_ORDER.filter(t => t !== "concepts").concat(["concepts"]);
-  for (let i = 0; i < arg.n; i++) { const q = genQuestion(per[i % per.length]); if (q) qs.push(q); }
-  const answers = new Array(qs.length).fill(null); let cur = 0; let endAt = Date.now() + arg.minutes * 60000; let timerId;
+  const saveExam = () => { ST.active.exam = { qs, answers, cur, minutes, left: Math.max(0, endAt - Date.now()), t: Date.now() }; save(ST); };
+  saveExam();
+  FLUSH_ACTIVE = saveExam;
+  LEAVE_GUARD = () => confirm("המבחן עדיין פתוח.\nאפשר לצאת – ההתקדמות נשמרת והשעון עוצר, ותוכל להמשיך מכרטיס 'מבחן סימולציה'.\n\nלצאת עכשיו?");
   const host = h("div"), timer = h("span", { class: "timer" }), prog = h("span", { class: "pill" });
-  app.append(h("div", { class: "row", style: "justify-content:space-between" }, timer, prog, h("button", { class: "btn bad", onclick: () => { if (confirm("לסיים את המבחן עכשיו?")) finishExam(); } }, "סיים")), host);
-  function tick() { const left = Math.max(0, endAt - Date.now()); const m = Math.floor(left / 60000), s = Math.floor(left % 60000 / 1000); timer.textContent = `${m}:${String(s).padStart(2, "0")}`; if (left <= 0) finishExam(); }
+  app.append(h("div", { class: "row", style: "justify-content:space-between" }, timer, prog, h("span", { class: "muted", style: "font-size:12px" }, "💾 נשמר אוטומטית"), h("button", { class: "btn bad", onclick: () => { if (confirm("לסיים את המבחן עכשיו?")) finishExam(); } }, "סיים")), host);
+  let ticks = 0;
+  function tick() { const left = Math.max(0, endAt - Date.now()); const m = Math.floor(left / 60000), s = Math.floor(left % 60000 / 1000); timer.textContent = `${m}:${String(s).padStart(2, "0")}`; if (++ticks % 20 === 0) saveExam(); if (left <= 0) finishExam(); }
   timerId = EXAM_TIMER = setInterval(tick, 500); tick();
   function show() {
     const q = qs[cur]; host.innerHTML = ""; prog.textContent = `שאלה ${cur + 1} מתוך ${qs.length}`;
-    host.append(questionView(q, { instant: false, preset: answers[cur] && answers[cur].i, presetText: answers[cur] && answers[cur].txt, onSelect: (i, o) => { answers[cur] = q.kind === "mc" ? { i } : { txt: o }; }, onAnswer() { } }));
-    host.append(h("div", { class: "row" }, h("button", { class: "btn alt", disabled: cur === 0, onclick: () => { cur--; show(); } }, "→ הקודמת"), h("button", { class: "btn", onclick: () => { if (cur < qs.length - 1) { cur++; show(); } else if (confirm("לסיים את המבחן?")) finishExam(); } }, cur < qs.length - 1 ? "הבאה ←" : "סיים")));
+    host.append(questionView(q, { instant: false, preset: answers[cur] && answers[cur].i, presetText: answers[cur] && answers[cur].txt, onSelect: (i, o) => { answers[cur] = q.kind === "mc" ? { i } : { txt: o }; saveExam(); }, onAnswer() { } }));
+    host.append(h("div", { class: "row" }, h("button", { class: "btn alt", disabled: cur === 0, onclick: () => { cur--; saveExam(); show(); } }, "→ הקודמת"), h("button", { class: "btn", onclick: () => { if (cur < qs.length - 1) { cur++; saveExam(); show(); } else if (confirm("לסיים את המבחן?")) finishExam(); } }, cur < qs.length - 1 ? "הבאה ←" : "סיים")));
   }
   show();
   function finishExam() {
-    clearInterval(timerId); app.innerHTML = "";
+    clearInterval(timerId); app.innerHTML = ""; LEAVE_GUARD = null; FLUSH_ACTIVE = null; delete ST.active.exam; save(ST);
     let right = 0; const byTopic = {}; const wrong = [];
     qs.forEach((q, i) => { const a = answers[i]; const ok = a && (q.kind === "mc" ? a.i === q.correct : checkText(q, a.txt)); if (ok) right++; else wrong.push({ q, a }); const b = byTopic[q.topic] = byTopic[q.topic] || { n: 0, r: 0 }; b.n++; if (ok) b.r++; record(q, !!ok); });
     const pct = Math.round(100 * right / qs.length); ST.exams.push({ t: Date.now(), pct, n: qs.length }); save(ST);
     app.append(h("div", { class: "card" }, h("h2", {}, `ציון: ${pct}% (${right}/${qs.length})`), ...Object.entries(byTopic).map(([t, b]) => h("div", { style: "margin:6px 0" }, h("div", { class: "row", style: "justify-content:space-between" }, TOPICS[t].he, `${b.r}/${b.n}`), h("div", { class: "bar" }, h("i", { style: `width:${100 * b.r / b.n}%` })))), h("button", { class: "btn", onclick: () => go("exam") }, "מבחן נוסף")),
       h("h3", {}, wrong.length ? "תיקון הטעויות" : "אין טעויות – כל הכבוד!"),
       ...wrong.map(({ q, a }) => h("div", { class: "card" }, h("div", { class: "prompt", html: q.prompt }), h("div", { class: "fb no" }, "התשובה שלך: ", a ? (q.kind === "mc" ? q.options[a.i] : a.txt) : "לא נענתה"), h("div", { class: "fb good" }, "נכון: ", h("span", { class: "ltr", html: fmtAns(q) }), h("div", { html: q.expl || "" }), h("div", { class: "src" }, "מקור: " + q.src)))));
+    window.scrollTo(0, 0);
   }
 }
 
