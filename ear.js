@@ -25,16 +25,48 @@ function unlockAudio() {
   return AC;
 }
 document.addEventListener("pointerdown", () => { try { unlockAudio(); } catch (e) { } }, { passive: true });
-document.addEventListener("touchend", () => { try { unlockAudio(); } catch (e) { } }, { passive: true });
-function stopAudio() { liveNodes.forEach(o => { try { o.stop(); } catch (e) { } }); liveNodes = []; }
+["touchend", "click", "mouseup", "keydown"].forEach(ev => document.addEventListener(ev, () => { try { unlockAudio(); } catch (e) { } }, { passive: true, capture: true }));
 const midiToHz = m => 440 * Math.pow(2, (m - 69) / 12);
-function playNote(m, when, dur, vol = .5) {
-  const ctx = unlockAudio(); const t0 = ctx.currentTime + 0.03 + when; const f = midiToHz(m);
-  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + .015); g.gain.exponentialRampToValueAtTime(.0008, t0 + dur); g.connect(master);
-  [[1, "triangle", 1], [2, "sine", .35], [3, "sine", .12]].forEach(([mul, type, a]) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f * mul; const og = ctx.createGain(); og.gain.value = a; o.connect(og); og.connect(g); o.start(t0); o.stop(t0 + dur + .05); liveNodes.push(o); o.onended = () => { const i = liveNodes.indexOf(o); if (i >= 0) liveNodes.splice(i, 1); }; });
+/* שני מנועי שמע:
+   • "web" – Web Audio (מהיר, אבל באייפון מושתק כשמתג הצלצול על שקט).
+   • "media" – מייצרים קובץ WAV ומנגנים דרך נגן מדיה (עובד גם כשהמתג על שקט). באייפון זה ברירת המחדל. אפשר להחליף בתפריט האוזן. */
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+function audioEngine() { const e = ST && ST.ear && ST.ear.engine; return e === "web" || e === "media" ? e : (IS_IOS ? "media" : "web"); }
+const SR = 22050; let mediaEls = [];
+function renderPCM(evs) {
+  const total = Math.max(...evs.map(e => e.when + e.dur)) + 0.08, n = Math.ceil(total * SR), buf = new Float32Array(n);
+  evs.forEach(e => {
+    const f = midiToHz(e.m), s0 = Math.floor(e.when * SR), len = Math.floor(e.dur * SR), vol = e.vol, ratio = Math.max(.0008 / vol, 1e-6);
+    for (let i = 0; i < len && s0 + i < n; i++) {
+      const t = i / SR, env = t < .015 ? vol * (t / .015) : vol * Math.pow(ratio, (t - .015) / Math.max(e.dur - .015, .01));
+      const w = 2 * Math.PI * f * t; buf[s0 + i] += env * ((2 / Math.PI) * Math.asin(Math.sin(w)) + .35 * Math.sin(2 * w) + .12 * Math.sin(3 * w));
+    }
+  });
+  let peak = 0; for (let i = 0; i < n; i++) { const a = Math.abs(buf[i]); if (a > peak) peak = a; } const k = peak > .9 ? .9 / peak : 1;
+  const wav = new ArrayBuffer(44 + n * 2), v = new DataView(wav), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, buf[i] * k)) * 32767, true);
+  return new Blob([wav], { type: "audio/wav" });
 }
-function playSeq(midis, step, dur) { midis.forEach((m, i) => playNote(m, i * step, dur)); }
-function playChord(midis, dur) { midis.forEach(m => playNote(m, 0, dur, midis.length > 2 ? .26 : .34)); }
+function playMedia(evs) {
+  const url = URL.createObjectURL(renderPCM(evs)); const a = new Audio(url); a.setAttribute("playsinline", ""); a.volume = 1; mediaEls.push(a);
+  const done = () => { try { URL.revokeObjectURL(url); } catch (e) { } mediaEls = mediaEls.filter(x => x !== a); }; a.addEventListener("ended", done); a.addEventListener("error", done);
+  const p = a.play(); if (p && p.catch) return p.catch(err => { done(); throw err; }); return Promise.resolve();
+}
+function playWeb(evs) {
+  const ctx = unlockAudio();
+  evs.forEach(e => {
+    const t0 = ctx.currentTime + 0.03 + e.when, f = midiToHz(e.m), g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(e.vol, t0 + .015); g.gain.exponentialRampToValueAtTime(.0008, t0 + e.dur); g.connect(master);
+    [[1, "triangle", 1], [2, "sine", .35], [3, "sine", .12]].forEach(([mul, type, a]) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f * mul; const og = ctx.createGain(); og.gain.value = a; o.connect(og); og.connect(g); o.start(t0); o.stop(t0 + e.dur + .05); liveNodes.push(o); o.onended = () => { const i = liveNodes.indexOf(o); if (i >= 0) liveNodes.splice(i, 1); }; });
+  });
+  return Promise.resolve();
+}
+function stopAudio() { liveNodes.forEach(o => { try { o.stop(); } catch (e) { } }); liveNodes = []; mediaEls.forEach(a => { try { a.pause(); } catch (e) { } }); mediaEls = []; }
+function playEvents(evs) { try { return audioEngine() === "media" ? playMedia(evs) : playWeb(evs); } catch (e) { return Promise.reject(e); } }
+function playNote(m, when, dur, vol = .5) { return playEvents([{ m, when, dur, vol }]); }
+function playSeq(midis, step, dur) { return playEvents(midis.map((m, i) => ({ m, when: i * step, dur, vol: .5 }))); }
+function playChord(midis, dur) { return playEvents(midis.map(m => ({ m, when: 0, dur, vol: midis.length > 2 ? .26 : .34 }))); }
+function audioStatus() { return `מנוע שמע: ${audioEngine() === "media" ? "נגן מדיה (עובד גם במצב שקט)" : "Web Audio"}` + (audioEngine() === "web" && AC ? ` · מצב: ${AC.state}` : ""); }
 
 /* ---------- נתוני התרגילים ---------- */
 const EAR_ROOTS = ["C", "D", "E", "F", "G", "A", "B", "Bb", "Eb", "Ab", "F#", "C#", "Db", "Gb"];
@@ -140,14 +172,14 @@ function piano(marks, focusMidi) {
   const s = svgEl("svg", { viewBox: `0 0 ${W} ${KH}`, width: W, height: KH, role: "group", "aria-label": "פסנתר – לחץ על קליד כדי לנגן. אפשר ללחוץ כמה קלידים יחד", style: "direction:ltr;display:block;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none" });
   s.addEventListener("contextmenu", e => e.preventDefault());
   const xOf = m => WHITE_PC.includes(m % 12) ? whites.indexOf(m) * KW + KW / 2 : (whites.indexOf(m - 1) + 1) * KW;
-  const rects = {}, held = {}, sel = new Set(); let chordMode = false;
+  const rects = {}, held = {}, retry = {}, sel = new Set(); let chordMode = false;
   const paintKey = m => { const r = rects[m]; if (!r) return; const on = Object.values(held).includes(m); r.setAttribute("fill", on ? COL.tap : sel.has(m) ? "#f2b84b" : r.getAttribute("data-fill")); };
   const press = m => e => {
     e.preventDefault(); try { e.target.setPointerCapture(e.pointerId); } catch (x) { }
     if (chordMode) { sel.has(m) ? sel.delete(m) : sel.add(m); paintKey(m); playNote(m, 0, 1.4, .5); refreshBar(); return; }
-    held[e.pointerId] = m; paintKey(m); playNote(m, 0, 2.6, .5);
+    held[e.pointerId] = m; paintKey(m); const pr = playNote(m, 0, 2.6, .5); if (pr && pr.catch) pr.catch(() => { retry[e.pointerId] = m; });
   };
-  const release = e => { const m = held[e.pointerId]; if (m === undefined) return; delete held[e.pointerId]; setTimeout(() => paintKey(m), 140); };
+  const release = e => { if (retry[e.pointerId] !== undefined) { const rm = retry[e.pointerId]; delete retry[e.pointerId]; playNote(rm, 0, 2.2, .5).catch(() => { }); } const m = held[e.pointerId]; if (m === undefined) return; delete held[e.pointerId]; setTimeout(() => paintKey(m), 140); };
   s.addEventListener("pointerup", release); s.addEventListener("pointercancel", release); s.addEventListener("lostpointercapture", release);
   whites.forEach((m, i) => { const r = svgEl("rect", { x: i * KW + 1, y: 2, width: KW - 2, height: KH - 4, rx: 4, fill: "#e6e6ec", "data-fill": "#e6e6ec", stroke: "#8a8a93", style: "cursor:pointer" }); r.addEventListener("pointerdown", press(m)); rects[m] = r; s.append(r); });
   whites.forEach(m => { const t = svgEl("text", { x: xOf(m), y: KH - 8, "font-size": 12, fill: "#555", "text-anchor": "middle", style: "pointer-events:none" }); t.textContent = WHITE_NM[m % 12] + (m % 12 === 0 ? (Math.floor(m / 12) - 1) : ""); s.append(t); });
@@ -204,10 +236,12 @@ function makeEarQ(kind, item) {
   return null;
 }
 function playNotes(fam, notes, mode) {
-  const ms = notes.map(n => n.midi);
-  if (fam === "ivl") { if (mode === "harm") playChord(ms, 2.2); else if (mode === "desc") playSeq([...ms].reverse(), .8, 1.5); else playSeq(ms, .8, 1.5); }
-  else if (fam === "chord") { if (mode === "arp") playSeq(ms, .45, 1.8); else playChord(ms, 2.4); }
-  else playSeq(mode === "desc" ? [...ms].reverse() : ms, .4, .9);
+  const ms = notes.map(n => n.midi); let p;
+  if (fam === "ivl") { if (mode === "harm") p = playChord(ms, 2.2); else if (mode === "desc") p = playSeq([...ms].reverse(), .8, 1.5); else p = playSeq(ms, .8, 1.5); }
+  else if (fam === "chord") { if (mode === "arp") p = playSeq(ms, .45, 1.8); else p = playChord(ms, 2.4); }
+  else p = playSeq(mode === "desc" ? [...ms].reverse() : ms, .4, .9);
+  if (p && p.catch) p.catch(e => { if (e && e.name === "NotAllowedError") { const el = document.getElementById("audiohint"); if (el) el.textContent = "הצליל נחסם בדפדפן – לחץ על 🔁 שוב. אם זה חוזר: בתפריט האוזן לחץ 'החלף מנוע שמע'."; } });
+  return p;
 }
 const LTRS = t => h("span", { style: "direction:ltr;unicode-bidi:isolate;display:inline-block" }, t);
 function nameLine(q, item) {
@@ -229,7 +263,7 @@ function ear(app, arg) {
 function statLine(kind) { const s = ST.stats["ear:" + kind]; return s && s.n ? `הצלחה ${Math.round(100 * s.r / s.n)}% · ${s.n} שאלות` : null; }
 function earHub(app) {
   app.append(h("div", { class: "card" }, h("h2", {}, "אימון אוזן"), h("p", { class: "muted", style: "margin:4px 0 10px" }, "בחר נושא. אחרי כל תשובה רואים את התווים על החמשה ועל הפסנתר, ואפשר לנגן ולהשוות."),
-    h("div", { class: "row" }, h("button", { class: "btn alt", style: "padding:12px 16px", onclick: () => { unlockAudio(); playSeq([60, 64, 67, 72], .35, 1.2); } }, "🔊 בדיקת שמע"), h("span", { class: "muted", style: "font-size:13px" }, "לא שומעים? בטלפון: כבו מצב שקט (המתג בצד) והגבירו ווליום."))));
+    h("div", { class: "row" }, h("button", { class: "btn alt", style: "padding:12px 16px", onclick: () => { unlockAudio(); const st = document.getElementById("astat"); playSeq([60, 64, 67, 72], .35, 1.2).then(() => { if (st) st.textContent = audioStatus() + " · ניגן ✔"; }).catch(e => { if (st) st.textContent = audioStatus() + " · נחסם: " + (e && e.name); }); if (st) st.textContent = audioStatus(); } }, "🔊 בדיקת שמע"), h("button", { class: "btn alt", style: "padding:12px 16px", onclick: () => { ST.ear.engine = audioEngine() === "media" ? "web" : "media"; save(ST); unlockAudio(); const st = document.getElementById("astat"); playSeq([60, 64, 67, 72], .35, 1.2).catch(() => { }); if (st) st.textContent = audioStatus(); } }, "🔁 החלף מנוע שמע"), h("div", { class: "muted", id: "astat", style: "font-size:13px;width:100%" }, audioStatus()), h("span", { class: "muted", style: "font-size:13px" }, "לא שומעים? בטלפון: כבו מצב שקט (המתג בצד) והגבירו ווליום."))));
   const sv = ST.active.ear;
   if (sv && EX[sv.kind]) app.append(h("div", { class: "card", style: "border-color:var(--acc)" }, h("h3", {}, "⏸ תרגיל שנשמר באמצע"), h("p", {}, `${EX[sv.kind].he} – ${sv.label} · ${sv.idx} מתוך ${sv.N} שאלות, ${sv.right} נכונות.`),
     h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { unlockAudio(); go("ear", { stage: "run", resume: true }); } }, "▶ המשך"), h("button", { class: "btn alt", onclick: () => { if (confirm("למחוק את התרגיל השמור? לא ניתן לשחזר.")) { delete ST.active.ear; save(ST); go("ear"); } } }, "🗑 מחק"))));
@@ -281,7 +315,7 @@ function earRun(app, arg) {
 
 לצאת עכשיו?`);
   const bar = h("i", { style: "width:0%" }), host = h("div");
-  app.append(h("div", { class: "row", style: "flex-wrap:nowrap" }, h("button", { class: "btn alt", style: "padding:8px 14px", "aria-label": "יציאה", onclick: () => { go("ear", { stage: "presets", kind }); } }, "✕"), h("div", { class: "bar", style: "flex:1;height:14px" }, bar), h("span", { class: "muted", id: "earcnt" }, "")), h("div", { class: "muted", style: "font-size:12px;text-align:center" }, "💾 ההתקדמות נשמרת אוטומטית"), host);
+  app.append(h("div", { class: "row", style: "flex-wrap:nowrap" }, h("button", { class: "btn alt", style: "padding:8px 14px", "aria-label": "יציאה", onclick: () => { go("ear", { stage: "presets", kind }); } }, "✕"), h("div", { class: "bar", style: "flex:1;height:14px" }, bar), h("span", { class: "muted", id: "earcnt" }, "")), h("div", { class: "muted", style: "font-size:12px;text-align:center" }, "💾 ההתקדמות נשמרת אוטומטית"), h("div", { id: "audiohint", style: "color:var(--bad);font-size:13px;text-align:center" }), host);
   function setBar() { bar.style.width = (100 * idx / N) + "%"; const c = document.getElementById("earcnt"); if (c) c.textContent = `${Math.min(idx + 1, N)}/${N}`; }
   function next() { if (idx >= N) return done(); q = makeEarQ(kind, pick(items)); if (!q) return next(); answered = false; pianoScroll = null; setBar(); paint(); play(); }
   function play() { playNotes(E.fam, q.notes, mode); }
