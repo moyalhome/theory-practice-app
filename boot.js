@@ -15,7 +15,7 @@ async function unlockData(msg) {
   let pass = keyFromUrl() || localStorage.getItem(KEY_STORE);
   while (true) {
     if (pass) {
-      try { const d = await decryptWith(pass); localStorage.setItem(KEY_STORE, pass); window.TERMS = d.TERMS; window.CORPUS = d.CORPUS; window.LESSON_TITLES = d.LESSON_TITLES; return true; }
+      try { const d = await decryptWith(pass); localStorage.setItem(KEY_STORE, pass); window.TERMS = d.TERMS; window.CORPUS = d.CORPUS; window.LESSON_TITLES = d.LESSON_TITLES; window.NOTES = d.NOTES || []; return true; }
       catch (e) { localStorage.removeItem(KEY_STORE); msg = "הקוד שגוי – נסה שוב (או פתח את הקישור המקורי)."; }
     }
     pass = await askPass(msg);

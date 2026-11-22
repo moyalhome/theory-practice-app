@@ -8,7 +8,7 @@ let VOCAB = null;
 function rawToks(s) { return nrm(s).split(/[^\p{L}\p{N}#♭♯]+/u).filter(Boolean); }
 function ensureVocab() {
   if (VOCAB) return; VOCAB = {}; const add = t => rawToks(t).forEach(w => VOCAB[w] = (VOCAB[w] || 0) + 1);
-  CORPUS.forEach(d => add(d.t)); TERMS.forEach(t => { add(t.term); add(t.en || ""); t.quotes.forEach(q => add(q.q)); });
+  CORPUS.forEach(d => add(d.t)); NOTE_LIST().forEach(n => add(n.t)); TERMS.forEach(t => { add(t.term); add(t.en || ""); t.quotes.forEach(q => add(q.q)); });
 }
 function stem(w) {
   if (!/[א-ת]/.test(w)) return w; ensureVocab(); let x = w;
@@ -264,8 +264,33 @@ function translateQuery(raw) {
   return q.replace(/\s+/g, " ").trim();
 }
 
+/* ---- הערות המרצה: מה שנאמר בשיעורים (שווה בערך לשקפים) ---- */
+const NOTE_LIST = () => (typeof NOTES !== "undefined" ? NOTES : []);
+let NOTE_IDX = null;
+/* שורש גס להשוואה גמישה בין מילים ("מזהים"/"לזהות", "הרמוני"/"הרמוניות") */
+const rootOf = w => { if (!/[א-ת]/.test(w)) return w; let x = w.replace(/^[מלהבכוש]+(?=.{3,})/, "").replace(/(ים|ות|ית|ה|י|ת)$/, ""); return x.length > 4 ? x.slice(0, 4) : x; };
+const NOTE_GENERIC = new Set(["רגש", "תחושה", "נותן", "נותנת", "מרגיש", "נשמע", "נשמעת", "אופי", "סאונד", "איזה", "איזו", "אילו", "מזהים", "לזהות", "איך", "כיצד", "ההבדל", "הבדל", "תסביר", "אפשר", "יש", "קורה", "סולם", "מושג"].map(rootOf));
+const noteToks = q => [...new Set(toks(q).map(rootOf))];
+/* מוסיפים גם שורות בודדות מתוך בלוקים ארוכים (למשל "מינור הרמוני - ערבי, יהודי…") כדי שתשובה תמצא את השורה המדויקת */
+const noteUnits = () => NOTE_LIST().flatMap(n => { const ls = n.t.split("\n").map(x => x.trim()).filter(x => x.length >= 14 && /[א-ת]/.test(x)); return ls.length > 4 ? [n, ...ls.map(t => ({ l: n.l, t, line: true }))] : [n]; });
+function buildNoteIdx() { const df = {}; const docs = noteUnits().map(n => { const tk = new Set(noteToks(n.t)); tk.forEach(w => df[w] = (df[w] || 0) + 1); return { n, tk, len: tk.size }; }); NOTE_IDX = { docs, df, N: Math.max(docs.length, 1) }; }
+function noteSearch(q, k = 2, strict = true) {
+  if (!NOTE_IDX) buildNoteIdx(); let qt = noteToks(q); const content = qt.filter(w => !NOTE_GENERIC.has(w)); if (content.length) qt = content; if (!qt.length || !NOTE_IDX.docs.length) return [];
+  const idf = w => Math.log(1 + NOTE_IDX.N / (NOTE_IDX.df[w] || 1)); const tot = qt.reduce((a, w) => a + idf(w), 0) || 1;
+  const res = NOTE_IDX.docs.map(d => { let hit = 0, n = 0; qt.forEach(w => { if (d.tk.has(w)) { hit += idf(w); n++; } }); return { n: d.n, cov: hit / tot, cnt: n, sc: hit / tot - Math.min(d.len, 80) / 800 }; })
+    .filter(r => r.cnt > 0 && (!strict || (r.cov >= 0.7 && r.cnt >= Math.min(2, qt.length)))).sort((a, b) => b.sc - a.sc);
+  const out = []; for (const r of res) { if (out.length >= k) break; if (out.some(o => o.l === r.n.l && (o.t.includes(r.n.t) || r.n.t.includes(o.t)))) continue; out.push(r.n); } return out;
+}
+/* פרומפט מוכן להדבקה ב-Claude (באפליקציית Claude / claude.ai): השאלה + קטעי המצגות והערות המרצה הרלוונטיים */
+function buildClaudePrompt(question) {
+  const q = solfegeToLatin(translateQuery(question.trim())); const sl = searchSlides(q, 4); const nt = noteSearch(q, 3, false);
+  const slides = sl.map(r => `[שיעור ${r.d.l}, שקף ${r.d.s}]\n${r.d.t}`).join("\n\n"); const notes = nt.map(n => `[המרצה, שיעור ${n.l}]\n${n.t}`).join("\n\n");
+  return `אני סטודנט בקורס "תאוריה והלחנה מודרנית א'" ומתכונן למבחן. ענה לי בעברית, בצורה אנושית, פשוטה ומדויקת, עם ההגדרות הנכונות. הסתמך קודם כל על חומר הקורס שמופיע כאן (המצגת היא האמת; אם משהו בהערות המרצה סותר את המצגת – ציין זאת), אפשר להרחיב מעבר לו כשזה עוזר להבנה אבל סמן מה מגיע מהחומר ומה הוספת. בסוף ציין מקורות (שיעור/שקף).\n\nהשאלה שלי: ${question.trim()}\n\n=== קטעים רלוונטיים מהמצגות ===\n${slides || "(לא נמצאו)"}\n\n=== מה שהמרצה אמר בשיעורים ===\n${notes || "(לא נמצאו)"}`;
+}
+function copyText(text) { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(() => true, () => { prompt("העתק:", text); return false; }); prompt("העתק:", text); return Promise.resolve(false); }
+
 /* ---- המוח של הצ'אט ---- */
-function chatAnswer(raw) {
+function chatAnswerCore(raw) {
   const q = solfegeToLatin(translateQuery(raw.trim())); const notes = findNotes(q);
   const scaleWords = /סולם|פנטטוני|הרמוני|מלודי|דורי|פריגי|לידי|מיקסולידי|אאולי|לוקריין|איוניין|בלוז\s*סקייל|blues\s*scale/i.test(q) && !/אקורד/.test(q);
   const calc = ansSlideRef(q) || ansIvSize(q) || ansInterval(q, notes) || ansScaleChords(q, notes) || (scaleWords ? (ansScale(q, notes) || ansChord(q)) : (ansChord(q) || ansScale(q, notes)));
@@ -302,6 +327,12 @@ function renderBrief(p) {
   if (p.more && p.more.length) wrap.append(moreBox(p.more, "עוד מהשקפים"));
   return wrap;
 }
+function chatAnswer(raw) {
+  const ans = chatAnswerCore(raw); ans.q = raw.trim(); const q = solfegeToLatin(translateQuery(raw.trim()));
+  const calc = ans.parts[0] && ans.parts[0].kind === "calc";
+  const nh = calc ? [] : noteSearch(q, 2); if (nh.length) { ans.notes = nh; if (ans.parts.length && ans.parts[0].kind === "none") ans.parts = []; }
+  return ans;
+}
 function renderAnswer(box, ans) {
   ans.parts.forEach(p => {
     if (p.kind === "calc") box.append(h("div", { html: p.html }));
@@ -312,6 +343,8 @@ function renderAnswer(box, ans) {
     }
     else box.append(h("div", {}, "לא מצאתי את זה בחומר הקורס. נסה לנסח עם המושגים של השקפים (למשל: קדנצה, דרגה, טריטון, מודוס), או שאל על סולם/אקורד/מרווח מסוים (למשל \"סולם E דורי\")."));
   });
+  (ans.notes || []).forEach(n => box.append(h("div", { class: "fb good", style: "margin:8px 0" }, h("b", {}, `💬 מה שהמרצה אמר – שיעור ${n.l}`), h("div", { style: "white-space:pre-wrap;margin-top:4px" }, n.t.length > 420 ? n.t.slice(0, 420) + "…" : n.t), h("button", { class: "pill sref", onclick: () => openSlide(n.l, 1, { notes: true }) }, `📝 כל ההערות משיעור ${n.l}`))));
+  if (ans.q) { const cb = h("button", { class: "pill", style: "cursor:pointer;margin-top:8px", title: "מעתיק שאלה + קטעי חומר רלוונטיים – הדבק ב-Claude לתשובה מלאה כמו בשיחה", onclick: () => copyText(buildClaudePrompt(ans.q)).then(ok => { cb.textContent = ok ? "✔ הועתק – הדבק ב-Claude" : "📋 העתק ל-Claude"; setTimeout(() => cb.textContent = "📋 העתק ל-Claude לתשובה מלאה", 2500); }) }, "📋 העתק ל-Claude לתשובה מלאה"); box.append(h("div", {}, cb)); }
   const uniq = []; (ans.sources || []).forEach(s => { if (!uniq.some(u => u.l === s.l && u.s === s.s)) uniq.push(s); });
   if (uniq.length) {
     const holder = h("div");
@@ -330,7 +363,7 @@ function chat(app) {
   }
   inp.addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
   const chips = ["מהי קדנצה?", "מה ההבדל בין פתרון מדומה לפתרון מושהה", "מרווח בין C ל-G", "סולם F# מז'ור", "E דורי", "אקורד Am7", "אקורדים בסולם G מז'ור", "הסקסטה הקטנה מ-F", "מתי משתמשים במיקסולידי", "מה זה שאפל", "שיעור 3 שקף 7"];
-  app.append(h("div", { class: "card" }, h("h2", {}, "💬 צ'אט הקורס"), h("p", { class: "muted" }, "הצ'אט עונה אך ורק מתוך המצגות: הוא מחפש בחומר (עם מראה מקום ואפשרות לפתוח את השקף) ומחשב סולמות, אקורדים ומרווחים לפי כללי הקורס. הוא לא מודל שפה – עדיף שאלות קצרות עם מושגי הקורס."),
+  app.append(h("div", { class: "card" }, h("h2", {}, "💬 צ'אט הקורס"), h("p", { class: "muted" }, "הצ'אט מחפש ומחשב מתוך חומר הקורס: המצגות והערות המרצה משיעורים 1–15, עם מקור לכל תשובה. הוא לא מודל שפה, ולכן עדיף שאלות קצרות עם מושגי הקורס. לשאלה חופשית כמו בשיחה: כפתור \"📋 העתק ל-Claude\" מתחת לכל תשובה מכין שאלה עם החומר הרלוונטי להדבקה ב-Claude."),
     h("div", { class: "row" }, ...chips.map(c => h("button", { class: "pill", style: "cursor:pointer", onclick: () => ask(c) }, c)))), log,
     h("div", { class: "card", style: "position:sticky;bottom:8px" }, h("div", { class: "row", style: "flex-wrap:nowrap" }, inp, h("button", { class: "btn", onclick: () => ask() }, "שלח"))));
   inp.focus();

@@ -37,23 +37,24 @@ let SV = null;
 function openSlide(l, s, opts) {
   l = +l; s = Math.max(1, +s || 1); if (!SLIDE_COUNT[l]) return;
   if (SV) closeSlide();
-  const st = { l, s, zoom: false, text: false, grid: false, range: opts && opts.range || null };
+  const st = { l, s, zoom: false, text: false, notes: !!(opts && opts.notes), grid: false, range: opts && opts.range || null };
   const ov = h("div", { id: "slideview", role: "dialog", "aria-modal": "true", "aria-label": "מציג שקפים" });
   const title = h("div", { class: "sv-title" }), counter = h("div", { class: "sv-count" });
   const stage = h("div", { class: "sv-stage" }), info = h("div", { class: "sv-info" });
   const btn = (txt, fn, cls, label) => h("button", { class: "btn alt " + (cls || ""), "aria-label": label || null, onclick: fn }, txt);
   const prev = btn("→ הקודם", () => go2(-1)), next = btn("הבא ←", () => go2(1));
-  const zoomB = btn("🔍 הגדל", () => { st.zoom = !st.zoom; paint(); }), textB = btn("📝 טקסט", () => { st.text = !st.text; paint(); }), gridB = btn("🗂 כל השקפים", () => { st.grid = !st.grid; paint(); });
+  const zoomB = btn("🔍 הגדל", () => { st.zoom = !st.zoom; paint(); }), textB = btn("📝 טקסט", () => { st.text = !st.text; paint(); }), gridB = btn("🗂 כל השקפים", () => { st.grid = !st.grid; paint(); }), notesB = btn("💬 המרצה אמר", () => { st.notes = !st.notes; paint(); });
   const close = btn("✕ סגור", closeSlide, "sv-close", "סגור");
   const lessonSel = h("select", { class: "sv-sel", "aria-label": "בחר שיעור", onchange: e => { st.l = +e.target.value; st.s = 1; st.range = null; st.grid = false; paint(); } }, ...LESSON_IDS.map(i => h("option", { value: i, ...(i === l ? { selected: "selected" } : {}) }, `שיעור ${i}`)));
   ov.append(h("div", { class: "sv-top" }, close, h("div", { class: "sv-mid" }, title, counter), lessonSel), stage, info,
-    h("div", { class: "sv-bar" }, prev, next), h("div", { class: "sv-bar" }, zoomB, textB, gridB));
+    h("div", { class: "sv-bar" }, prev, next), h("div", { class: "sv-bar" }, zoomB, textB, gridB, notesB));
   document.body.append(ov); document.body.style.overflow = "hidden"; SV = { ov, st };
   function go2(d) { const n = SLIDE_COUNT[st.l]; const t = st.s + d; if (t < 1) { const pl = LESSON_IDS[LESSON_IDS.indexOf(st.l) - 1]; if (pl) { st.l = pl; st.s = SLIDE_COUNT[pl]; st.range = null; } } else if (t > n) { const nl = LESSON_IDS[LESSON_IDS.indexOf(st.l) + 1]; if (nl) { st.l = nl; st.s = 1; st.range = null; } } else st.s = t; st.zoom = false; paint(); }
   async function paint() {
     const { l: L, s: S } = st; lessonSel.value = L; title.textContent = slideTitle(L); counter.textContent = `שקף ${S} מתוך ${SLIDE_COUNT[L]}` + (st.range ? ` · (מומלץ לקרוא שקפים ${st.range[0]}–${st.range[1]})` : "");
-    zoomB.textContent = st.zoom ? "🔍 הקטן" : "🔍 הגדל"; textB.classList.toggle("on", st.text); gridB.classList.toggle("on", st.grid);
+    zoomB.textContent = st.zoom ? "🔍 הקטן" : "🔍 הגדל"; textB.classList.toggle("on", st.text); notesB.classList.toggle("on", st.notes); gridB.classList.toggle("on", st.grid);
     stage.innerHTML = ""; info.innerHTML = ""; stage.className = "sv-stage" + (st.zoom ? " zoom" : "");
+    if (st.notes) { const ns = (typeof NOTES !== "undefined" ? NOTES : []).filter(n => n.l === L); info.append(h("div", { class: "sv-text" }, h("b", {}, `💬 מה שהמרצה אמר – שיעור ${L}`), "\n\n", ns.length ? ns.map(n => n.t).join("\n\n— — —\n\n") : "(אין הערות לשיעור הזה)")); }
     if (st.text) info.append(h("div", { class: "sv-text" }, slideText(L, S) || "(אין טקסט לשקף)"));
     const loading = h("div", { class: "muted", style: "padding:30px;text-align:center" }, "טוען שקף…"); stage.append(loading);
     let urls; try { urls = await slidesLoad(L); } catch (e) { stage.innerHTML = ""; stage.append(h("div", { style: "padding:20px;text-align:center" }, "לא הצלחתי לטעון את השקפים: " + e.message, h("br"), h("button", { class: "btn", onclick: paint }, "נסה שוב"))); return; }
